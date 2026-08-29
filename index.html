@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="theme-color" content="#20242c" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+    <title>Edventure</title>
+    <style>
+      /* Everything here exists to stop the browser from doing anything
+         helpful: no scroll, no zoom, no text select, no tap highlight,
+         no pull-to-refresh. A 5-year-old will find every one of them. */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #20242c;
+        overscroll-behavior: none;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #app {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100dvh;
+        touch-action: none;
+      }
+      #gl {
+        display: block;
+        width: 100%;
+        height: 100%;
+        touch-action: none;
+      }
+
+      /* --- joystick (two divs, GPU-composited, zero WebGL cost) --- */
+      .stick-ring,
+      .stick-knob {
+        position: absolute;
+        top: 0;
+        left: 0;
+        border-radius: 50%;
+        pointer-events: none;
+        opacity: 0;
+        will-change: transform, opacity;
+        transition: opacity 140ms ease-out;
+      }
+      .stick-ring {
+        border: 3px solid rgba(255, 255, 255, 0.28);
+        background: rgba(255, 255, 255, 0.05);
+      }
+      .stick-knob {
+        background: rgba(255, 255, 255, 0.82);
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+      }
+      .stick-on {
+        opacity: 1;
+      }
+
+      /* --- first-touch prompt: a pulsing shape, no words --- */
+      #firsttouch {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: #20242c;
+        transition: opacity 500ms ease-out;
+      }
+      #firsttouch.gone {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #firsttouch svg {
+        width: 34vmin;
+        height: 34vmin;
+        animation: breathe 2.2s ease-in-out infinite;
+      }
+      @keyframes breathe {
+        0%,
+        100% {
+          transform: scale(1);
+          opacity: 0.85;
+        }
+        50% {
+          transform: scale(1.12);
+          opacity: 1;
+        }
+      }
+
+      /* --- debug overlay: the ONLY place text may exist. ?debug=1 only. --- */
+      #debug {
+        position: absolute;
+        top: 0;
+        left: 0;
+        padding: 6px 8px;
+        font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #9effa8;
+        background: rgba(0, 0, 0, 0.62);
+        white-space: pre;
+        pointer-events: none;
+        z-index: 10;
+      }
+      #maskblit {
+        position: absolute;
+        bottom: 8px;
+        right: 8px;
+        width: 128px;
+        height: 128px;
+        image-rendering: pixelated;
+        border: 1px solid #9effa8;
+        z-index: 10;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="gl"></canvas>
+      <div id="firsttouch">
+        <!-- a hand doing a drag gesture. no words, ever. -->
+        <svg viewBox="0 0 100 100" fill="none" aria-hidden="true">
+          <circle cx="50" cy="50" r="30" stroke="#ffffff" stroke-opacity=".25" stroke-width="3" />
+          <circle cx="50" cy="50" r="11" fill="#ffffff" fill-opacity=".9" />
+        </svg>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

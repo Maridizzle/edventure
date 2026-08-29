@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dev-dist/
+scratch/
+*.local
+.DS_Store
+.vite/
