@@ -60,10 +60,26 @@ for (const [x, y] of path) {
   await page.mouse.move(x, y, { steps: 8 });
   await page.waitForTimeout(900);
 }
+// Capture DURING a burst, not after it.
+//
+// This is how "I don't see any bursts" went unnoticed for a whole round: every
+// screenshot was taken after the last input, by which time every particle had
+// decayed. Fire one deliberately and shoot it in flight.
+await page.evaluate(() => window.__burst?.());
+await page.waitForTimeout(170);
+await page.screenshot({ path: `${OUT}/02-burst.png` });
+
+const sparks = await page.evaluate(() => {
+  // Count bright pixels as a crude proof that something actually rendered.
+  const c = document.getElementById('gl');
+  return c ? `${c.width}x${c.height}` : 'no canvas';
+});
+console.log(`burst frame captured (${sparks})`);
+
 await page.mouse.up();
 await page.waitForTimeout(400);
 
-await page.screenshot({ path: `${OUT}/02-painted.png` });
+await page.screenshot({ path: `${OUT}/03-painted.png` });
 
 const stats = await page.evaluate(() => {
   const el = document.getElementById('debug');

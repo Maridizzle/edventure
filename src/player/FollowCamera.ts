@@ -23,7 +23,9 @@ export class FollowCamera {
   private look = new Vector3();
 
   constructor(aspect: number) {
-    this.camera = new PerspectiveCamera(50, aspect, 0.5, 300);
+    // Narrower than before. At a shallow angle a wide FOV makes whatever is
+    // nearest loom over everything else.
+    this.camera = new PerspectiveCamera(42, aspect, 0.5, 300);
   }
 
   /** Snap on area entry so the first frame is not a swoop from the origin. */
@@ -40,6 +42,10 @@ export class FollowCamera {
     this.camera.position.lerp(this.target, damp(dt, 6.0));
 
     this.look.copy(pos).addScaledVector(vel, lookAhead);
+    // Aim just above him so the world ahead gets the frame rather than the
+    // floor underfoot. Kept small: push this up and he sinks toward the bottom
+    // of the screen and ends up behind his own thumb.
+    this.look.y += 1.0;
     this.lookSmooth.lerp(this.look, damp(dt, 4.0));
     this.camera.lookAt(this.lookSmooth);
   }
@@ -51,11 +57,14 @@ export class FollowCamera {
   setAspect(w: number, h: number): void {
     this.camera.aspect = w / h;
     const portrait = h > w;
-    // Framed for a diorama, not a field. The walls have to be visible or the
-    // stage stops reading as an enclosed place -- which is the entire point of
-    // building it as one. Pulled back further than a follow-cam would normally
-    // sit, and deliberately so.
-    this.offset.set(0, portrait ? 22 : 19, portrait ? 19 : 16);
+    // A shallow ~25-degree pitch, roughly half the old near-overhead angle.
+    //
+    // This is what makes anything hideable: at 25 degrees a hill of height H
+    // conceals about 2.1*H of ground behind it, so a 4m hill hides ~8m of
+    // world. The cost is that the whole room is no longer legible at a glance,
+    // which was a real virtue of the overhead framing -- the audio pad and the
+    // cleared fog carry the "how am I doing" signal now.
+    this.offset.set(0, portrait ? 16.5 : 14.5, portrait ? 27 : 24);
     this.camera.updateProjectionMatrix();
   }
 

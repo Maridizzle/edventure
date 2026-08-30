@@ -1,4 +1,4 @@
-import { Group, Mesh, Quaternion, Vector3, type ShaderMaterial } from 'three';
+import { Group, Mesh, Quaternion, Vector3, type BufferGeometry, type ShaderMaterial } from 'three';
 import { buildParts } from '../shape/ShapeBuilder';
 import { springStep } from '../core/Spring';
 import type { CharacterDef } from '../content/types';
@@ -33,8 +33,14 @@ export class Character {
   private inner = new Group();
   /** Stays world-aligned so the face is always visible. */
   private face = new Group();
+  private silhouettes: Mesh[] = [];
 
-  constructor(def: CharacterDef, material: ShaderMaterial, maxDetail: number) {
+  constructor(
+    def: CharacterDef,
+    material: ShaderMaterial,
+    maxDetail: number,
+    silhouette?: ShaderMaterial,
+  ) {
     this.def = def;
     const built = buildParts(def.shape, def.palette, maxDetail);
 
@@ -42,6 +48,7 @@ export class Character {
       const m = new Mesh(built.body, material);
       m.frustumCulled = false;
       this.inner.add(m);
+      this.addSilhouette(built.body, silhouette, this.inner);
     }
 
     for (const p of built.named) {
@@ -51,7 +58,9 @@ export class Character {
       // Billboard parts hang off the outer group so the body's tumble never
       // rotates them. The camera's yaw is fixed, so world-aligned is
       // player-facing.
-      (p.billboard ? this.face : this.inner).add(mesh);
+      const host = p.billboard ? this.face : this.inner;
+      host.add(mesh);
+      this.addSilhouette(p.geometry, silhouette, host);
       this.parts.push({
         mesh,
         rest: p.rest.clone(),
@@ -64,6 +73,28 @@ export class Character {
 
     this.group.add(this.inner);
     this.group.add(this.face);
+  }
+
+  /**
+   * A copy of the body that draws ONLY where something is in front of it.
+   *
+   * Dropping the camera to a shallow angle means the hills that hide
+   * collectibles can equally hide the player, and losing sight of yourself is
+   * the one thing this game must never do. `GreaterDepth` renders the copy
+   * exclusively where the depth test fails, so it is invisible in the open and
+   * becomes a bright outline the instant he goes behind a hill.
+   */
+  private addSilhouette(
+    geometry: BufferGeometry,
+    material: ShaderMaterial | undefined,
+    host: Group,
+  ): void {
+    if (!material) return;
+    const m = new Mesh(geometry, material);
+    m.frustumCulled = false;
+    m.renderOrder = 900;
+    host.add(m);
+    this.silhouettes.push(m);
   }
 
   /** Called from the fixed sim step. */
@@ -88,8 +119,13 @@ export class Character {
   }
 
   dispose(): void {
-    // Risk #11: undisposed geometry crashes the tab after ~10 area switches on
-    // a 4 GB phone. renderer.info.memory must return to baseline.
+    // Undisposed geometry crashes the tab after ~10 scene switches on a 4 GB
+    // phone; renderer.info.memory must return to baseline.
+    //
+    // Silhouettes SHARE geometry with the meshes they shadow, so detach them
+    // first and dispose each buffer exactly once.
+    for (const m of this.silhouettes) m.removeFromParent();
+    this.silhouettes.length = 0;
     for (const g of [this.inner, this.face]) {
       g.traverse((o) => {
         if (o instanceof Mesh) o.geometry.dispose();

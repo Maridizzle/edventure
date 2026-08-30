@@ -131,7 +131,7 @@ export interface SceneDef {
 
   stage: StageDef;
   palette: ScenePalette;
-  sky: { horizon: number; fogColor: number; fogNear: number; fogFar: number };
+  sky: { top: number; horizon: number; fogColor: number; fogNear: number; fogFar: number };
   light: { dir: [number, number, number] };
 
   /** Few, big, recognizable, individually placed. These make it read as a place. */
@@ -140,6 +140,8 @@ export interface SceneDef {
   scatter: Fixture[];
 
   door: DoorDef;
+  /** The things hidden in this scene. */
+  collectibles: CollectibleDef[];
   audio: { scale: string; rootHz: number };
   nextScenes: string[];
 }
@@ -150,10 +152,19 @@ export interface SceneDef {
 
 export interface CollectibleDef {
   id: string;
-  /** Which ordinary prop kind it masquerades as while hidden. */
-  disguise: string;
-  hatch: 'pop' | 'unfold' | 'wingsOpen';
-  note: number;
+  family: 'dino' | 'creature' | 'treasure' | 'vehicle';
+  /**
+   * `disguise` = stands in for an ordinary prop, invisible until he bumps the
+   * thing it is pretending to be. `tucked` = a real object placed somewhere the
+   * terrain or a fixture hides it, so he has to go and look.
+   */
+  hide: 'disguise' | 'tucked';
+  /** For `disguise`: which prop kind it masquerades as. */
+  disguiseAs?: string;
+  /** follow = joins the parade behind him. collect = flies away. park = stays. */
+  onFind: 'follow' | 'collect' | 'park';
+  note: number[];
+  scale: number;
   palette: number[];
   shape: ShapeRecipe;
 }

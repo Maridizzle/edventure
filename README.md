@@ -129,6 +129,29 @@ a small child alone in a dark fog bank is frightening rather than mysterious. Th
 never fades at all, and the door is capped at 70% fog so it always glows through as a
 landmark.
 
+### Hidden objects
+
+Two ways of hiding, mixed deliberately. `disguise` collectibles have no body at all until he
+bumps the ordinary prop standing in for them, which rewards touching everything. `tucked`
+ones are real objects placed by a scoring pass that seeks spots the terrain or a big fixture
+conceals — only possible because the camera is shallow enough for hills to occlude.
+
+The safety net is the **warmth field**: each hiding place bakes a radial gradient into the
+field texture's G channel, which the ground shader already sampled and which was previously
+unused. Near a hidden thing the floor runs hotter and sparkles. Hot-and-cold is the oldest
+wordless mechanic there is, and it is what stops a hidden object becoming a dead end.
+
+### Particles
+
+`fx/Motes.ts` is one pooled `Points` object — a single draw call for every particle.
+
+The point-size formula is load-bearing and easy to get wrong: a world-space radius `r` at
+distance `d` covers `r · H / (2 · d · tan(fovY/2))` pixels. An earlier version used
+`H * 0.35`, about a third of the correct scale, and every burst rendered as invisible 2-pixel
+specks for a whole release. `npm run smoke` now fires a burst deliberately via a debug hook
+and photographs it mid-flight, because the old screenshots were all taken after the
+particles had decayed.
+
 ### Solid objects
 
 `Fixture.solid` is a collision radius, deliberately separate from `footprint` (which is only
@@ -193,7 +216,12 @@ Notably **not** the mask upload — that's under 1% of the frame.
 | T2 bursts, sparkles, twinkles | done |
 | T3 silly-but-in-tune procedural audio | done |
 | T4 terrain hills, solid collision, arch and bridge | done |
-| S3 door blooms open → next scene | next |
+| U1 fireworks (point-size bug fixed) | done |
+| U2 low camera, tall hills, 48m stage, gradient sky | done |
+| U3 tight fog that stays cleared where he has *been* | done |
+| U4 hidden objects: disguised + tucked, warmth guidance | done |
+| U5 parade of found creatures, silhouette pips | next |
+| S3 door blooms open → next scene | |
 | S4 the candy dinosaur | |
 | S5 forest clearing (proves the grammar generalizes) | |
 | S6 indoor rooms, tiny worlds, vehicles | |

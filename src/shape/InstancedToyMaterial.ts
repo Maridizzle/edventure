@@ -92,6 +92,7 @@ export interface InstancedToyOpts {
   fogNear: number;
   fogFar: number;
   paintTex: DataTexture;
+  exploredTex: DataTexture;
   maskOrigin: Vector2;
   maskInvSize: number;
 }
@@ -103,6 +104,7 @@ export function createInstancedToyMaterial(o: InstancedToyOpts): ShaderMaterial 
       uGrayTint: { value: new Color().setHex(o.grayTint, SRGBColorSpace) },
       uTime: { value: 0 },
       uPaintTex: { value: o.paintTex },
+      uExploredTex: { value: o.exploredTex },
       uMaskOrigin: { value: o.maskOrigin.clone() },
       uMaskInvSize: { value: o.maskInvSize },
       uFogCenter: { value: new Vector2() },

@@ -24,6 +24,7 @@ import type { Terrain } from './Terrain';
  */
 
 const CELL = 4; // spatial-hash cell size, metres
+const SCRATCH_M4 = new Matrix4();
 
 interface Kind {
   mesh: InstancedMesh;
@@ -32,6 +33,7 @@ interface Kind {
 }
 
 export interface PropTouch {
+  id: number;
   x: number;
   z: number;
   y: number;
@@ -58,6 +60,8 @@ export class Props {
   private solid: Float32Array;
   /** Ids of painted props, so twinkles can pick one without scanning. */
   private paintedIds: number[] = [];
+  /** Props secretly standing in for a hidden collectible. */
+  private disguised = new Set<number>();
 
   /** Uniform grid: cell key -> prop ids. Never raycast against 150 objects. */
   private hash = new Map<number, number[]>();
@@ -185,6 +189,7 @@ export class Props {
           this.paintedCount++;
           this.paintedIds.push(id);
           out.push({
+            id,
             x: this.px[id]!,
             z: this.pz[id]!,
             y: this.py[id]!,
@@ -212,6 +217,27 @@ export class Props {
     k.tint.array[slot * 3 + 2] = t;
     k.tint.addUpdateRange(slot * 3, 3);
     k.tint.needsUpdate = true;
+  }
+
+  isDisguised(id: number): boolean {
+    return this.disguised.has(id);
+  }
+
+  markDisguised(id: number): void {
+    this.disguised.add(id);
+  }
+
+  /** Shrink a prop away, so the thing it was hiding can take its place. */
+  hide(id: number): void {
+    const k = this.kinds[this.kindOf[id]!]!;
+    const slot = this.slotOf[id]!;
+    SCRATCH_M4.makeScale(0, 0, 0);
+    SCRATCH_M4.setPosition(this.px[id]!, this.py[id]!, this.pz[id]!);
+    k.mesh.setMatrixAt(slot, SCRATCH_M4);
+    k.mesh.instanceMatrix.needsUpdate = true;
+    // It no longer blocks him either -- the collectible standing in its place
+    // is a thing to walk up to, not an obstacle.
+    this.solid[id] = 0;
   }
 
   private time = 0;

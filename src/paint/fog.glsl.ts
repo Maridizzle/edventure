@@ -33,10 +33,23 @@ export const fogPars = /* glsl */ `
 uniform vec2 uFogCenter;   // player XZ
 uniform vec2 uFogRange;    // x = clear radius, y = fully fogged
 uniform vec3 uFogColor;
+uniform sampler2D uExploredTex;
+
+/**
+ * Whether he has BEEN here. This, not paint coverage, is what permanently
+ * lifts the fog -- he can see much further than his brush reaches, and ground
+ * he looked at but did not paint used to fog over again the moment he left.
+ */
+float explored(vec3 world) {
+  vec2 uv = (world.xz - uMaskOrigin) * uMaskInvSize;
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
+  return smoothstep(0.15, 0.55, texture2D(uExploredTex, uv).r);
+}
 
 float fogAmount(vec3 world, float lit) {
   float d = distance(world.xz, uFogCenter);
-  return smoothstep(uFogRange.x, uFogRange.y, d) * (1.0 - clamp(lit, 0.0, 1.0));
+  float cleared = max(clamp(lit, 0.0, 1.0), explored(world));
+  return smoothstep(uFogRange.x, uFogRange.y, d) * (1.0 - cleared);
 }
 
 /**

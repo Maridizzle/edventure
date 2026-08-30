@@ -72,6 +72,11 @@ stick.onFirstTouch = () => {
 // --- debug ----------------------------------------------------------------
 const debug = new DebugOverlay();
 debug.mount(app, scene.mask);
+if (DebugOverlay.enabled) {
+  // Lets the smoke test photograph a firework mid-flight instead of trying to
+  // catch one by luck -- which is exactly how these shipped invisible once.
+  (window as unknown as { __burst?: () => void }).__burst = () => scene.testBurst();
+}
 
 // --- wake lock ------------------------------------------------------------
 type WakeLockSentinel = { release(): Promise<void> };

@@ -1,4 +1,5 @@
 import type { SceneDef } from '../types';
+import { candyCollectibles } from '../collectibles/candy';
 
 /**
  * Candy Land — the first scene.
@@ -30,8 +31,8 @@ export const candy: SceneDef = {
     // Square for now: AreaTransform and PaintMask are square and well tested,
     // and a square diorama is no less a room. Generalize only if a rectangular
     // stage turns out to matter visually.
-    width: 30,
-    depth: 30,
+    width: 48,
+    depth: 48,
     floor: 'terrain',
     walls: 'solid',
     // Tall enough to enclose, short enough not to eat a portrait frame at a
@@ -40,12 +41,17 @@ export const candy: SceneDef = {
     // Gentle rolling hills. The 26-degree slope clamp in Terrain keeps
     // everything traversable, so these are texture and occlusion rather than
     // obstacles -- the solid fixtures are what he actually goes around.
+    // Broad, tall hills. At the new shallow camera angle these are COVER:
+    // roughly 2.1m of concealment per metre of height, so a 4.5m rise hides
+    // about 9m of ground behind it. The slope clamp keeps them all walkable,
+    // so they hide things without ever blocking him.
     terrain: {
       octaves: [
-        { freq: 0.055, amp: 1.5 },
-        { freq: 0.13, amp: 0.45 },
+        { freq: 0.026, amp: 4.5 },
+        { freq: 0.062, amp: 1.4 },
+        { freq: 0.15, amp: 0.4 },
       ],
-      warp: { freq: 0.03, amp: 3.0 },
+      warp: { freq: 0.018, amp: 6.0 },
       maxSlopeDeg: 24,
     },
   },
@@ -59,7 +65,7 @@ export const candy: SceneDef = {
     trim: 0xff7ab8,
   },
 
-  sky: { horizon: 0xffe3f2, fogColor: 0xffe3f2, fogNear: 55, fogFar: 130 },
+  sky: { top: 0xef79bf, horizon: 0xf9c6e2, fogColor: 0xf9c6e2, fogNear: 55, fogFar: 130 },
   light: { dir: [0.4, 0.85, 0.35] },
 
   fixtures: [
@@ -71,7 +77,7 @@ export const candy: SceneDef = {
       scale: [1.5, 2.3],
       note: [0, 4, 7],
       palette: [CREAM, PINK, RED, MINT],
-      place: { at: 'ring', radius: 10.5, count: 5, jitter: 1.6 },
+      place: { at: 'ring', radius: 16, count: 7, jitter: 2.6 },
       shape: {
         parts: [
           { prim: 'cyl', pos: [0, 1.5, 0], scale: [0.12, 1.5, 0.12], color: 0 },
@@ -91,7 +97,7 @@ export const candy: SceneDef = {
       scale: [1.0, 1.5],
       note: [0, 2, 5],
       palette: [LILAC, MINT, LEMON],
-      place: { at: 'scatter', region: 'open', count: [3, 4] },
+      place: { at: 'scatter', region: 'open', count: [6, 8] },
       shape: {
         parts: [
           { prim: 'sphere', pos: [0, 0.75, 0], scale: [1.5, 1.05, 1.5], color: 0, detail: 1 },
@@ -167,7 +173,7 @@ export const candy: SceneDef = {
       scale: [1.0, 1.5],
       note: [2, 5, 9],
       palette: [0x2b2233, LEMON, PINK, CREAM],
-      place: { at: 'leftWall', along: 0.35, count: 3 },
+      place: { at: 'leftWall', along: 0.4, count: 4 },
       shape: {
         parts: [
           { prim: 'box', pos: [0, 0.25, 0], scale: [0.8, 0.25, 0.8], color: 0 },
@@ -184,7 +190,7 @@ export const candy: SceneDef = {
       scale: [1.1, 1.6],
       note: [0, 7],
       palette: [0xf0a860, PINK, CREAM],
-      place: { at: 'rightWall', along: 0.4, count: 3 },
+      place: { at: 'rightWall', along: 0.45, count: 4 },
       shape: {
         parts: [
           { prim: 'torus', pos: [0, 0.85, 0], scale: [0.85, 0.85, 0.85], rot: [1.57, 0, 0], color: 0, detail: 1 },
@@ -211,7 +217,7 @@ export const candy: SceneDef = {
       scale: [1.5, 1.9],
       note: [0, 7, 12],
       palette: [CREAM, RED, MINT],
-      place: { at: 'scatter', region: 'open', count: [1, 2] },
+      place: { at: 'scatter', region: 'open', count: [2, 3] },
       shape: {
         parts: [
           { prim: 'cyl', pos: [-1.7, 1.5, 0], scale: [0.22, 1.5, 0.22], color: 0 },
@@ -236,7 +242,7 @@ export const candy: SceneDef = {
       scale: [1.3, 1.7],
       note: [2, 9],
       palette: [0x3a2f45, LEMON, PINK],
-      place: { at: 'scatter', region: 'edge', count: [1, 1] },
+      place: { at: 'scatter', region: 'edge', count: [2, 2] },
       shape: {
         parts: [
           { prim: 'box', pos: [0, 2.1, 0], scale: [2.6, 0.18, 0.9], color: 0 },
@@ -261,7 +267,7 @@ export const candy: SceneDef = {
       scale: [0.5, 1.0],
       note: [0, 2, 4, 7, 9],
       palette: [PINK, MINT, LEMON, LILAC],
-      place: { at: 'scatter', region: 'open', count: [16, 24] },
+      place: { at: 'scatter', region: 'open', count: [30, 42] },
       shape: {
         parts: [{ prim: 'sphere', pos: [0, 0.32, 0], scale: [0.32, 0.32, 0.32], color: 0, detail: 1 }],
       },
@@ -272,7 +278,7 @@ export const candy: SceneDef = {
       scale: [0.7, 1.3],
       note: null,
       palette: [CREAM, RED, MINT, LEMON],
-      place: { at: 'scatter', region: 'open', count: [26, 38] },
+      place: { at: 'scatter', region: 'open', count: [44, 62] },
       shape: {
         parts: [
           { prim: 'cyl', pos: [0, 0.07, 0], scale: [0.05, 0.16, 0.05], rot: [0, 0, 1.4], color: 0 },
@@ -285,7 +291,7 @@ export const candy: SceneDef = {
       scale: [0.6, 1.1],
       note: [12],
       palette: [CREAM, 0xffe9f4],
-      place: { at: 'scatter', region: 'edge', count: [8, 12] },
+      place: { at: 'scatter', region: 'edge', count: [14, 20] },
       shape: {
         parts: [{ prim: 'box', pos: [0, 0.22, 0], scale: [0.22, 0.22, 0.22], color: 0 }],
       },
@@ -311,6 +317,7 @@ export const candy: SceneDef = {
     },
   },
 
+  collectibles: candyCollectibles,
   audio: { scale: 'majorPentatonic', rootHz: 293.66 },
   nextScenes: ['candy'],
 };

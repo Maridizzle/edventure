@@ -24,6 +24,7 @@ export interface GroundMaterialOpts {
   palette: GroundPalette;
   transform: AreaTransform;
   paintTex: DataTexture;
+  exploredTex: DataTexture;
   fieldTex: DataTexture;
   maskOrigin: Vector2;
   maskInvSize: number;
@@ -41,6 +42,7 @@ export function createGroundMaterial(o: GroundMaterialOpts): ShaderMaterial {
   return new ShaderMaterial({
     uniforms: {
       uPaintTex: { value: o.paintTex },
+      uExploredTex: { value: o.exploredTex },
       uFieldTex: { value: o.fieldTex },
       uNoise: { value: o.noiseTex },
       uMaskOrigin: { value: t.uMaskOrigin },

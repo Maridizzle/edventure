@@ -1,9 +1,7 @@
 import {
-  Color,
   Group,
   Mesh,
   Scene,
-  SRGBColorSpace,
   Vector2,
   Vector3,
   type ShaderMaterial,
@@ -21,14 +19,18 @@ import { layoutScene, type LayoutResult } from '../world/Layout';
 import { buildStage, type StageBuild } from '../world/Stage';
 import { Props, TOUCH_SCRATCH } from '../world/Props';
 import { computeReachable } from '../world/Reachability';
+import { Collectibles, type FoundEvent } from '../world/Collectibles';
 import { Motes } from './fx/Motes';
+import { Shockwave } from './fx/Shockwave';
+import { Explored } from '../world/Explored';
+import { createSky } from '../world/Sky';
 import { AudioEngine } from '../core/Audio/AudioEngine';
 import { SCALES } from '../core/Audio/Scale';
 import { Door } from '../world/Door';
 import { Character } from '../player/Character';
 import { FollowCamera } from '../player/FollowCamera';
 import { FLAVORS, makeMoveState, stepMotion, type MoveState } from '../player/Motion';
-import { createToyMaterial } from '../shape/ToyMaterial';
+import { createSilhouetteMaterial, createToyMaterial } from '../shape/ToyMaterial';
 import { createInstancedToyMaterial } from '../shape/InstancedToyMaterial';
 import { blob } from '../content/characters/blob';
 import { candy } from '../content/scenes/candy';
@@ -51,7 +53,7 @@ const PROP_WEIGHT = 0.4;
  * fog bank is frightening rather than mysterious, and the fog is the sky's
  * colour so it reads as haze, never as darkness.
  */
-const FOG_CLEAR_M = 9.5;
+const FOG_CLEAR_M = 8.5;
 const FOG_FULL_M = 17;
 
 /** Seconds between idle sparkles on already-painted things. */
@@ -86,6 +88,7 @@ export class PlayScene {
   private toyMat: ShaderMaterial;
   private playerMat: ShaderMaterial;
   private doorMat: ShaderMaterial;
+  private silhouetteMat: ShaderMaterial;
   private instMat: ShaderMaterial;
   private paintTex;
   private fieldTex;
@@ -101,7 +104,13 @@ export class PlayScene {
   private prevCellZ = 0;
 
   readonly audio = new AudioEngine();
+  readonly explored: Explored;
+  readonly collectibles: Collectibles;
+  private field: Uint8Array;
+  private found: FoundEvent[] = [];
   private motes: Motes;
+  private shockwave: Shockwave;
+  private sky;
   private twinkleTimer = 0;
   private fogCenter = new Vector2();
 
@@ -139,6 +148,7 @@ export class PlayScene {
     this.paintTex = createPaintTexture(this.mask);
     const field = new Uint8Array(settings.maskCells * settings.maskCells * 2);
     for (let i = 0; i < settings.maskCells * settings.maskCells; i++) field[i * 2] = 255;
+    this.field = field;
     this.fieldTex = createFieldTexture(field, settings.maskCells);
     this.noiseTex = createNoiseTexture(
       makeNoiseTextureData(NOISE_SIZE, stream(seed, 'noisetex')),
@@ -146,7 +156,9 @@ export class PlayScene {
     );
 
     // --- sky + fog ---
-    this.scene.background = new Color().setHex(def.sky.horizon, SRGBColorSpace);
+    this.explored = new Explored(size);
+    this.sky = createSky(def.sky.top, def.sky.horizon);
+    this.scene.add(this.sky);
 
     const lightDir = new Vector3(...def.light.dir).normalize();
     // Radial, player-centred fog replaces three's camera-distance fog entirely.
@@ -156,6 +168,7 @@ export class PlayScene {
       fogNear: FOG_CLEAR_M,
       fogFar: FOG_FULL_M,
       paintTex: this.paintTex,
+      exploredTex: this.explored.texture,
       maskOrigin: mask.uMaskOrigin,
       maskInvSize: mask.uMaskInvSize,
     };
@@ -244,8 +257,25 @@ export class PlayScene {
       ),
     );
 
+    // Hidden things, and the warmth field that guarantees he can find them.
+    this.collectibles = new Collectibles(
+      def,
+      seed,
+      this.terrain,
+      this.layout.placed,
+      this.props,
+      this.instMat,
+      this.worldGroup,
+      settings.shapeDetail,
+      size / 2,
+    );
+    this.collectibles.bakeWarmth(this.field, this.transform);
+    this.fieldTex.needsUpdate = true;
+
     this.motes = new Motes(settings.particles);
     this.scene.add(this.motes.points);
+    this.shockwave = new Shockwave();
+    this.scene.add(this.shockwave.mesh);
     this.audio.setScene(def.audio.rootHz, SCALES[def.audio.scale] ?? undefined);
 
     this.door = new Door(
@@ -258,7 +288,8 @@ export class PlayScene {
     this.worldGroup.add(this.door.group);
 
     // --- player ---
-    this.player = new Character(blob, this.playerMat, settings.shapeDetail);
+    this.silhouetteMat = createSilhouetteMaterial(blob.palette[0] ?? 0xffffff);
+    this.player = new Character(blob, this.playerMat, settings.shapeDetail, this.silhouetteMat);
     this.worldGroup.add(this.player.group);
 
     this.move = makeMoveState(blob.radius);
@@ -315,10 +346,43 @@ export class PlayScene {
         this.transform.cellZ(p.z),
         this.transform.radiusCells(PROP_SPLASH_M),
       );
-      this.motes.burst(p.x, p.y + 0.7, p.z, 14, p.color);
+      this.motes.burst(p.x, p.y + 0.9, p.z, 44, p.color, this.def.palette.accent);
+      this.shockwave.fire(p.x, p.y + 0.15, p.z, p.color);
       this.audio.play(p.note);
+      // Whatever was pretending to be this prop now hatches out of it.
+      this.collectibles.onPropPainted(p.id, this.found);
     }
+
+    this.collectibles.setTime(this.time);
+    this.collectibles.checkProximity(this.move.pos.x, this.move.pos.z, blob.radius, this.found);
+    for (let i = 0; i < this.found.length; i++) {
+      const f = this.found[i]!;
+      if (f.def.hide === 'disguise') {
+        // The ordinary prop it was impersonating gets out of the way.
+        for (const h of this.collectibles.items) {
+          if (h.def === f.def && h.propId >= 0) this.props.hide(h.propId);
+        }
+      }
+      // A find should feel bigger than painting a gumdrop.
+      const c = f.def.palette[0] ?? 0xffffff;
+      this.motes.burst(f.x, f.y + 1.2, f.z, 90, c, this.def.palette.accent, 9);
+      this.shockwave.fire(f.x, f.y + 0.15, f.z, c);
+      this.audio.play(f.def.note);
+      this.mask.stamp(
+        this.transform.cellX(f.x),
+        this.transform.cellZ(f.z),
+        this.transform.radiusCells(PROP_SPLASH_M * 1.6),
+      );
+      // The glow that led him here has done its job.
+      this.collectibles.bakeWarmth(this.field, this.transform);
+      this.fieldTex.needsUpdate = true;
+      buzz();
+    }
+    this.found.length = 0;
     if (TOUCH_SCRATCH.length > 0) buzz();
+
+    // Fog lifts wherever he has BEEN, not merely where he painted.
+    this.explored.visit(this.move.pos.x, this.move.pos.z);
 
     this.player.update(this.move, dt);
   }
@@ -344,6 +408,8 @@ export class PlayScene {
     }
 
     this.motes.update(dt);
+    this.shockwave.update(dt);
+    this.explored.upload();
 
     // Painted things keep sparkling, so a finished room stays alive.
     this.twinkleTimer -= dt;
@@ -359,6 +425,19 @@ export class PlayScene {
     renderer.render(this.scene, this.follow.camera);
   }
 
+  /** Debug only: throw a firework at the player so it can be photographed. */
+  testBurst(): void {
+    this.motes.burst(
+      this.move.pos.x,
+      this.move.pos.y + 1.0,
+      this.move.pos.z,
+      40,
+      this.def.palette.floorA,
+      this.def.palette.accent,
+    );
+    this.shockwave.fire(this.move.pos.x, this.move.pos.y - 0.4, this.move.pos.z, this.def.palette.accent);
+  }
+
   applySettings(s: TierSettings): void {
     this.settings.maskUploadInterval = s.maskUploadInterval;
     this.settings.particles = s.particles;
@@ -366,7 +445,7 @@ export class PlayScene {
 
   resize(w: number, h: number): void {
     this.follow.setAspect(w, h);
-    this.motes.setPixelScale(h);
+    this.motes.setPixelScale(h, this.follow.camera.fov);
   }
 
   /**
@@ -381,11 +460,15 @@ export class PlayScene {
     this.worldGroup.traverse((o) => {
       if (o instanceof Mesh) o.geometry.dispose();
     });
+    this.collectibles.dispose();
     this.motes.dispose();
+    this.shockwave.dispose();
+    this.explored.dispose();
     this.groundMat.dispose();
     this.toyMat.dispose();
     this.playerMat.dispose();
     this.doorMat.dispose();
+    this.silhouetteMat.dispose();
     this.instMat.dispose();
     this.paintTex.dispose();
     this.fieldTex.dispose();

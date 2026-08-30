@@ -1,4 +1,12 @@
-import { Color, ShaderMaterial, SRGBColorSpace, Vector2, Vector3, type DataTexture } from 'three';
+import {
+  Color,
+  GreaterDepth,
+  ShaderMaterial,
+  SRGBColorSpace,
+  Vector2,
+  Vector3,
+  type DataTexture,
+} from 'three';
 import { fogPars, maskPars } from '../paint/fog.glsl';
 
 /**
@@ -79,12 +87,42 @@ export interface ToyMaterialOpts {
   fogNear: number;
   fogFar: number;
   paintTex: DataTexture;
+  exploredTex: DataTexture;
   maskOrigin: Vector2;
   maskInvSize: number;
   /** true for the player, which is always in colour and never fades. */
   selfLit?: boolean;
   painted?: boolean;
   maxFog?: number;
+}
+
+/**
+ * The occluded-player outline.
+ *
+ * Uses `depthFunc: GreaterDepth` so it draws only where something is in front
+ * of it: invisible in the open, a bright shape the moment a hill swallows him.
+ */
+export function createSilhouetteMaterial(hex: number): ShaderMaterial {
+  return new ShaderMaterial({
+    uniforms: { uColor: { value: new Color().setHex(hex, SRGBColorSpace) } },
+    vertexShader: /* glsl */ `
+      precision mediump float;
+      void main() {
+        gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision mediump float;
+      uniform vec3 uColor;
+      void main() {
+        gl_FragColor = vec4(uColor, 1.0);
+        #include <colorspace_fragment>
+      }
+    `,
+    depthFunc: GreaterDepth,
+    depthWrite: false,
+    transparent: true,
+  });
 }
 
 export function createToyMaterial(o: ToyMaterialOpts): ShaderMaterial {
@@ -97,6 +135,7 @@ export function createToyMaterial(o: ToyMaterialOpts): ShaderMaterial {
       uMaxFog: { value: o.maxFog ?? 1 },
       uSelfLit: { value: o.selfLit ? 1 : 0 },
       uPaintTex: { value: o.paintTex },
+      uExploredTex: { value: o.exploredTex },
       uMaskOrigin: { value: o.maskOrigin.clone() },
       uMaskInvSize: { value: o.maskInvSize },
       uFogCenter: { value: new Vector2() },
