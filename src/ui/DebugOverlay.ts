@@ -20,6 +20,15 @@ export class DebugOverlay {
   private frames = 0;
   private fps = 0;
 
+  /** Re-point at a new scene's mask after a room change. */
+  remount(parent: HTMLElement, mask: PaintMask): void {
+    this.el?.remove();
+    this.canvas?.remove();
+    this.el = null;
+    this.canvas = null;
+    this.mount(parent, mask);
+  }
+
   mount(parent: HTMLElement, mask: PaintMask): void {
     if (!DebugOverlay.enabled) return;
 

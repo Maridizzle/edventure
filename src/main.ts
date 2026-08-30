@@ -1,5 +1,7 @@
-import { SRGBColorSpace, WebGLRenderer } from 'three';
+import { SRGBColorSpace, Vector2, WebGLRenderer } from 'three';
 import { PlayScene } from './game/PlayScene';
+import { Transition } from './game/Transition';
+import { AudioEngine } from './core/Audio/AudioEngine';
 import { Joystick } from './ui/Joystick';
 import { DebugOverlay } from './ui/DebugOverlay';
 import {
@@ -49,8 +51,39 @@ function applySize(): void {
 }
 
 // --- scene ----------------------------------------------------------------
-const seed = Math.floor(Math.random() * 0xffffffff);
-const scene = new PlayScene(seed, { ...TIERS[startTier] }, 1);
+//
+// The audio engine lives HERE, not in the scene: the ambient pad has to survive
+// a room change, and the first-touch unlock must not be re-run every time he
+// walks through a door.
+const audio = new AudioEngine();
+const transition = new Transition(app);
+
+let scene = makeScene(Math.floor(Math.random() * 0xffffffff));
+
+function makeScene(seed: number): PlayScene {
+  const s = new PlayScene(seed, { ...TIERS[governor.tier] }, 1, audio);
+  s.onExit = () => void goThroughDoor();
+  transition.setColor(s.def.sky.fogColor);
+  return s;
+}
+
+/**
+ * Walk through the door into a fresh room.
+ *
+ * Everything expensive -- tearing down the old scene, building the new one, and
+ * compiling its shaders -- happens behind the fade, so the hitch is never seen.
+ */
+async function goThroughDoor(): Promise<void> {
+  if (transition.running) return;
+  await transition.run(() => {
+    const old = scene;
+    scene = makeScene(Math.floor(Math.random() * 0xffffffff));
+    old.dispose();
+    applySize();
+    renderer.compile(scene.scene, scene.follow.camera);
+    debug.remount(app, scene.mask);
+  });
+}
 
 governor.onChange = (_t, s) => {
   scene.applySettings(s);
@@ -65,8 +98,8 @@ stick.onFirstTouch = () => {
   void requestWakeLock();
   // Mobile browsers only start audio from a real user gesture, so this is the
   // one moment it can happen.
-  scene.audio.unlock();
-  scene.audio.startPad();
+  audio.unlock();
+  audio.startPad();
 };
 
 // --- debug ----------------------------------------------------------------
@@ -75,7 +108,21 @@ debug.mount(app, scene.mask);
 if (DebugOverlay.enabled) {
   // Lets the smoke test photograph a firework mid-flight instead of trying to
   // catch one by luck -- which is exactly how these shipped invisible once.
-  (window as unknown as { __burst?: () => void }).__burst = () => scene.testBurst();
+  const w = window as unknown as {
+    __burst?: () => void;
+    __openDoor?: () => void;
+    __exit?: () => Promise<void>;
+    __mem?: () => { geometries: number; textures: number };
+  };
+  w.__burst = () => scene.testBurst();
+  w.__openDoor = () => scene.forceOpenDoor();
+  w.__exit = () => goThroughDoor();
+  // The leak check: this teardown path had never run before rooms could be
+  // left, so it gets asserted rather than eyeballed.
+  w.__mem = () => ({
+    geometries: renderer.info.memory.geometries,
+    textures: renderer.info.memory.textures,
+  });
 }
 
 // --- wake lock ------------------------------------------------------------
@@ -120,9 +167,9 @@ document.addEventListener('visibilitychange', () => {
   hidden = document.hidden;
   if (hidden) {
     releaseWakeLock();
-    scene.audio.suspend();
+    audio.suspend();
   } else {
-    scene.audio.resume();
+    audio.resume();
     last = performance.now();
     void requestWakeLock();
   }
@@ -136,6 +183,9 @@ applySize();
 renderer.compile(scene.scene, scene.follow.camera);
 
 // --- loop -----------------------------------------------------------------
+/** Input is frozen mid-transition, so the dying room cannot be driven. */
+const ZERO_INPUT = new Vector2();
+
 const FIXED = 1 / 60;
 const MAX_SUBSTEPS = 5; // prevents a spiral of death after a tab-switch stall
 let accumulator = 0;
@@ -157,7 +207,7 @@ function frame(now: number): void {
   accumulator += dt;
   let steps = 0;
   while (accumulator >= FIXED && steps < MAX_SUBSTEPS) {
-    scene.fixedUpdate(stick.value, FIXED);
+    scene.fixedUpdate(transition.running ? ZERO_INPUT : stick.value, FIXED);
     accumulator -= FIXED;
     steps++;
   }

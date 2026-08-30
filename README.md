@@ -55,6 +55,7 @@ npm run dev          # LAN-accessible; open the Network URL on a phone
 | `npm run build:standalone` | one self-contained HTML file — the tap-to-play link |
 | `npm run smoke <url\|file>` | headless render + paint check, writes `scratch/shots/` |
 | `npm run offline <url>` | proves the service worker serves the app with the network cut |
+| `npm run rooms <url>` | walks through ten doors and asserts nothing leaks |
 
 Append `?debug=1` to any URL for the stats overlay and a live blit of the paint mask.
 
@@ -128,6 +129,32 @@ abstract number and becomes "I lit up this world". The fog is the sky's colour, 
 a small child alone in a dark fog bank is frightening rather than mysterious. The player
 never fades at all, and the door is capped at 70% fog so it always glows through as a
 landmark.
+
+### Rooms and the door
+
+`progress = 0.6 · groundCoverage + 0.4 · propsPainted`, gated at **0.50** — deliberately low,
+because more rooms beats longer rooms at five and each new room is another set of hidden
+things. It opens once and never re-locks.
+
+Two things about the door are load-bearing rather than decorative:
+
+- **The moment fires where he is looking, not only at the door.** With tight fog and a low
+  camera the door is usually off-screen when it opens, so the celebration also bursts around
+  the player and throws a ribbon of sparks spanning the *whole* distance to the doorway. A
+  trail that only reaches a few metres from the door is invisible from across a foggy room —
+  that makes it decoration, not direction.
+- **The back wall is split around the doorway**, so it reads as a real opening rather than an
+  ornament stuck to a wall.
+
+Transitions fade via a DOM overlay (no fill cost, cannot fail on a weak GPU) and everything
+expensive — teardown, rebuild, `renderer.compile()` — happens behind it. The audio engine
+lives at app level, not in the scene, so the ambient pad survives a room change and the
+first-touch unlock never re-runs.
+
+**`npm run rooms` is not optional.** `PlayScene.dispose()` was dead code until rooms could be
+left, and the very first run of that check found a leak: the sky hangs off `scene` rather
+than `worldGroup`, so the teardown traverse never reached it and every room leaked exactly
+one geometry. Ten transitions must return the geometry and texture counters to baseline.
 
 ### Hidden objects
 
@@ -220,8 +247,8 @@ Notably **not** the mask upload — that's under 1% of the frame.
 | U2 low camera, tall hills, 48m stage, gradient sky | done |
 | U3 tight fog that stays cleared where he has *been* | done |
 | U4 hidden objects: disguised + tucked, warmth guidance | done |
+| S3 door opens at 50% → walk through → a fresh room | done |
 | U5 parade of found creatures, silhouette pips | next |
-| S3 door blooms open → next scene | |
 | S4 the candy dinosaur | |
 | S5 forest clearing (proves the grammar generalizes) | |
 | S6 indoor rooms, tiny worlds, vehicles | |

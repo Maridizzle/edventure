@@ -24,7 +24,7 @@ import { Motes } from './fx/Motes';
 import { Shockwave } from './fx/Shockwave';
 import { Explored } from '../world/Explored';
 import { createSky } from '../world/Sky';
-import { AudioEngine } from '../core/Audio/AudioEngine';
+import type { AudioEngine } from '../core/Audio/AudioEngine';
 import { SCALES } from '../core/Audio/Scale';
 import { Door } from '../world/Door';
 import { Character } from '../player/Character';
@@ -47,6 +47,16 @@ const PROP_SPLASH_M = 5.0;
  */
 const GROUND_WEIGHT = 0.6;
 const PROP_WEIGHT = 0.4;
+
+/**
+ * How painted a room must be before the way out opens.
+ *
+ * Deliberately low. More rooms beats longer rooms at five: a new place
+ * arriving every couple of minutes is what holds him, and each new room is
+ * another set of hidden things. Never 1.0 -- requiring a perfectly painted
+ * floor would turn a no-fail game into a grind.
+ */
+const GATE = 0.5;
 
 /**
  * How far he can see. Generous on purpose: a small child alone inside a tight
@@ -103,7 +113,6 @@ export class PlayScene {
   private prevCellX = 0;
   private prevCellZ = 0;
 
-  readonly audio = new AudioEngine();
   readonly explored: Explored;
   readonly collectibles: Collectibles;
   private field: Uint8Array;
@@ -119,9 +128,21 @@ export class PlayScene {
   private settings: TierSettings;
   private layout: LayoutResult;
 
-  constructor(seed: number, settings: TierSettings, aspect: number, def: SceneDef = candy) {
+  /** Fires once he walks through the open door. */
+  onExit: (() => void) | null = null;
+  private exited = false;
+  private readonly audio: AudioEngine;
+
+  constructor(
+    seed: number,
+    settings: TierSettings,
+    aspect: number,
+    audio: AudioEngine,
+    def: SceneDef = candy,
+  ) {
     this.def = def;
     this.settings = settings;
+    this.audio = audio;
 
     const size = def.stage.width;
     const t = def.stage.terrain;
@@ -225,14 +246,15 @@ export class PlayScene {
       ...fogArgs,
     });
 
+    // --- layout first: the wall needs to know where to leave the doorway ---
+    this.layout = layoutScene(def, seed);
+
     // --- the diorama shell ---
     // The walls sample the floor mask beneath them, so colour climbs the room
     // as he paints along its edges.
-    this.stage = buildStage(def, this.toyMat);
+    this.stage = buildStage(def, this.toyMat, this.layout.door.x);
     this.worldGroup.add(this.stage.group);
 
-    // --- layout, props, door ---
-    this.layout = layoutScene(def, seed);
     this.props = new Props(
       def,
       this.layout.placed,
@@ -276,7 +298,7 @@ export class PlayScene {
     this.scene.add(this.motes.points);
     this.shockwave = new Shockwave();
     this.scene.add(this.shockwave.mesh);
-    this.audio.setScene(def.audio.rootHz, SCALES[def.audio.scale] ?? undefined);
+    audio.setScene(def.audio.rootHz, SCALES[def.audio.scale] ?? undefined);
 
     this.door = new Door(
       def,
@@ -300,6 +322,10 @@ export class PlayScene {
 
     this.follow = new FollowCamera(aspect);
     this.follow.reset(this.move.pos);
+  }
+
+  get doorOpen(): boolean {
+    return this.door.isOpen;
   }
 
   /** 0..1. Ground and props combined; this is what opens the door. */
@@ -384,6 +410,17 @@ export class PlayScene {
     // Fog lifts wherever he has BEEN, not merely where he painted.
     this.explored.visit(this.move.pos.x, this.move.pos.z);
 
+    // The room is done: open the way out, loudly.
+    if (!this.door.isOpen && this.progress >= GATE) {
+      this.door.open();
+      this.celebrateDoor();
+    }
+
+    if (!this.exited && this.door.reached(this.move.pos.x, this.move.pos.z, blob.radius)) {
+      this.exited = true;
+      this.onExit?.();
+    }
+
     this.player.update(this.move, dt);
   }
 
@@ -407,6 +444,7 @@ export class PlayScene {
       (m.uniforms.uFogCenter!.value as Vector2).copy(this.fogCenter);
     }
 
+    if (this.door.update(dt)) this.beckon();
     this.motes.update(dt);
     this.shockwave.update(dt);
     this.explored.upload();
@@ -425,6 +463,13 @@ export class PlayScene {
     renderer.render(this.scene, this.follow.camera);
   }
 
+  /** Debug only: open the way out without painting the whole room first. */
+  forceOpenDoor(): void {
+    if (this.door.isOpen) return;
+    this.door.open();
+    this.celebrateDoor();
+  }
+
   /** Debug only: throw a firework at the player so it can be photographed. */
   testBurst(): void {
     this.motes.burst(
@@ -436,6 +481,54 @@ export class PlayScene {
       this.def.palette.accent,
     );
     this.shockwave.fire(this.move.pos.x, this.move.pos.y - 0.4, this.move.pos.z, this.def.palette.accent);
+  }
+
+  /**
+   * The moment the room is finished. Three signals at once, none of them a
+   * word: colour, motion, and a rising phrase.
+   */
+  private celebrateDoor(): void {
+    const d = this.door.position;
+    const accent = this.def.palette.accent;
+    this.motes.burst(d.x, d.y + 3.0, d.z, 110, this.def.door.palette[0] ?? accent, accent, 10);
+    this.shockwave.fire(d.x, d.y + 0.2, d.z, accent);
+
+    // The door is very probably OFF SCREEN when this fires -- the fog is tight
+    // and the camera is low. So the moment has to also happen where he is
+    // looking, or he finishes a room and never learns anything changed.
+    this.motes.burst(this.move.pos.x, this.move.pos.y + 1.4, this.move.pos.z, 60, accent, accent, 7);
+    this.shockwave.fire(this.move.pos.x, this.move.pos.y - 0.4, this.move.pos.z, accent);
+    this.beckon();
+
+    // A rising arpeggio, which in a pentatonic scale cannot come out wrong.
+    for (const degree of [0, 2, 4, 7, 9]) this.audio.play([degree]);
+    buzz();
+  }
+
+  /**
+   * A ribbon of sparks running the WHOLE way from the door to the player.
+   *
+   * This is the entire "the way out is open, it is that way" instruction, and
+   * it contains no words. It has to span the full distance: a trail that only
+   * reaches a few metres from the door is invisible to a child standing on the
+   * far side of a foggy room, which makes it decoration rather than direction.
+   */
+  private beckon(): void {
+    const d = this.door.position;
+    const dx = this.move.pos.x - d.x;
+    const dz = this.move.pos.z - d.z;
+    const n = 26;
+    for (let i = 0; i < n; i++) {
+      // Squared spacing bunches the sparks toward HIS end, so the near ones are
+      // unmissable and the line still points back the way he must go.
+      const t = Math.pow(i / (n - 1), 0.65);
+      this.motes.twinkle(
+        d.x + dx * t,
+        d.y + 2.6 - t * 1.6,
+        d.z + dz * t,
+        this.def.palette.accent,
+      );
+    }
   }
 
   applySettings(s: TierSettings): void {
@@ -452,17 +545,36 @@ export class PlayScene {
    * Scene switching is a new leak surface. Ten transitions crashes a 4 GB
    * phone if anything here is missed — watch renderer.info.memory.
    */
+  /**
+   * Give every GPU resource back.
+   *
+   * Ten room changes with anything missed crashes a 4 GB phone, and this path
+   * only started running once rooms could be left -- so `npm run rooms` asserts
+   * the geometry and texture counters return to baseline rather than trusting
+   * this list to be complete. It has already caught one omission: the sky hangs
+   * off `scene` rather than `worldGroup`, so the traverse below never reached
+   * it and every room leaked exactly one geometry.
+   */
   dispose(): void {
     this.props.dispose();
+    this.collectibles.dispose();
     this.stage.dispose();
     this.door.dispose();
     this.player.dispose();
+    this.motes.dispose();
+    this.shockwave.dispose();
+
+    // Anything still parented under the world, chiefly the ground.
     this.worldGroup.traverse((o) => {
       if (o instanceof Mesh) o.geometry.dispose();
     });
-    this.collectibles.dispose();
-    this.motes.dispose();
-    this.shockwave.dispose();
+    this.worldGroup.removeFromParent();
+
+    // The sky is a child of `scene`, not `worldGroup`.
+    this.sky.geometry.dispose();
+    (this.sky.material as ShaderMaterial).dispose();
+    this.sky.removeFromParent();
+
     this.explored.dispose();
     this.groundMat.dispose();
     this.toyMat.dispose();
