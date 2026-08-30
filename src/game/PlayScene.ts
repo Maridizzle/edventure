@@ -22,6 +22,10 @@ import { computeReachable } from '../world/Reachability';
 import { Collectibles, type FoundEvent } from '../world/Collectibles';
 import { Motes } from './fx/Motes';
 import { Shockwave } from './fx/Shockwave';
+import { Celebration, type CelebrationPhase } from './fx/Celebration';
+import { Followers, MAX_PARADE } from '../world/Followers';
+import { Roster } from './Roster';
+import type { VoiceStore } from '../core/Audio/Voice';
 import { Explored } from '../world/Explored';
 import { createSky } from '../world/Sky';
 import type { AudioEngine } from '../core/Audio/AudioEngine';
@@ -68,6 +72,14 @@ const FOG_FULL_M = 17;
 
 /** Seconds between idle sparkles on already-painted things. */
 const TWINKLE_EVERY = 0.55;
+
+/**
+ * How far in front of the doorway the parade gathers.
+ *
+ * On the room side of it, deliberately: a crowd standing IN the doorway is
+ * hidden by the wall, and the crowd only works as a signpost if he can see it.
+ */
+const GATHER_M = 4.2;
 
 /**
  * Haptics, only once the page has genuinely been interacted with. Chrome logs
@@ -119,6 +131,10 @@ export class PlayScene {
   private found: FoundEvent[] = [];
   private motes: Motes;
   private shockwave: Shockwave;
+  readonly followers: Followers;
+  private celebration = new Celebration();
+  private readonly roster: Roster;
+  private readonly voice: VoiceStore | null;
   private sky;
   private twinkleTimer = 0;
   private fogCenter = new Vector2();
@@ -139,10 +155,14 @@ export class PlayScene {
     aspect: number,
     audio: AudioEngine,
     def: SceneDef = candy,
+    roster: Roster = new Roster(),
+    voice: VoiceStore | null = null,
   ) {
     this.def = def;
     this.settings = settings;
     this.audio = audio;
+    this.roster = roster;
+    this.voice = voice;
 
     const size = def.stage.width;
     const t = def.stage.terrain;
@@ -314,6 +334,20 @@ export class PlayScene {
     this.player = new Character(blob, this.playerMat, settings.shapeDetail, this.silhouetteMat);
     this.worldGroup.add(this.player.group);
 
+    // Everyone he has already found came through the door with him. They are
+    // built from the app-level roster, not from anything in this scene, which
+    // is the whole reason the parade survives a room change.
+    this.followers = new Followers(
+      roster.parade(MAX_PARADE),
+      this.terrain,
+      this.instMat,
+      this.worldGroup,
+      settings.shapeDetail,
+      this.layout.spawn.x,
+      this.layout.spawn.z,
+    );
+    this.celebration.onPhase = (p) => this.onCelebrationPhase(p);
+
     this.move = makeMoveState(blob.radius);
     this.move.pos.set(this.layout.spawn.x, 0, this.layout.spawn.z);
     this.move.pos.y = this.terrain.heightAt(this.move.pos.x, this.move.pos.z) + blob.radius;
@@ -389,6 +423,13 @@ export class PlayScene {
           if (h.def === f.def && h.propId >= 0) this.props.hide(h.propId);
         }
       }
+      // He keeps it, and it starts following him THIS second rather than in
+      // the next room. `add` returns false for one he already owns, so meeting
+      // the same kind again in a later room never clones anybody.
+      if (this.roster.add(f.def) && f.def.onFind === 'follow') {
+        this.followers.add(f.def, f.x, f.z);
+      }
+
       // A find should feel bigger than painting a gumdrop.
       const c = f.def.palette[0] ?? 0xffffff;
       this.motes.burst(f.x, f.y + 1.2, f.z, 90, c, this.def.palette.accent, 9);
@@ -409,6 +450,10 @@ export class PlayScene {
 
     // Fog lifts wherever he has BEEN, not merely where he painted.
     this.explored.visit(this.move.pos.x, this.move.pos.z);
+
+    // Breadcrumbs go in the FIXED step so the parade's spacing does not change
+    // when the quality governor moves the device between 30 and 60 fps.
+    this.followers.record(this.move.pos.x, this.move.pos.z);
 
     // The room is done: open the way out, loudly.
     if (!this.door.isOpen && this.progress >= GATE) {
@@ -444,16 +489,28 @@ export class PlayScene {
       (m.uniforms.uFogCenter!.value as Vector2).copy(this.fogCenter);
     }
 
-    if (this.door.update(dt)) this.beckon();
+    // The parade, and the celebration that drives it.
+    this.followers.update(dt, this.move.pos.x, this.move.pos.z, this.time);
+    this.celebration.update(dt, this.followers.allArrived);
+    while (this.celebration.takePulse()) this.cheerPulse();
+
+    // Once the crowd is gathered at the doorway THEY are the signpost, so the
+    // ribbon of sparks stands down. Until then -- including if somebody is
+    // still stuck behind a gumdrop -- it keeps pointing the way.
+    if (this.door.update(dt) && !(this.followers.count > 0 && this.followers.allArrived)) {
+      this.beckon();
+    }
     this.motes.update(dt);
     this.shockwave.update(dt);
     this.explored.upload();
 
-    // Painted things keep sparkling, so a finished room stays alive.
+    // Painted things keep sparkling, so a finished room stays alive -- and once
+    // the animals are waiting at the door, so do they.
     this.twinkleTimer -= dt;
     if (this.twinkleTimer <= 0) {
       this.twinkleTimer = TWINKLE_EVERY;
-      const t = this.props.randomPainted();
+      const waiting = this.followers.paradeMode === 'wait' ? this.followers.sparkleTarget() : null;
+      const t = waiting ?? this.props.randomPainted();
       if (t) this.motes.twinkle(t.x, t.y, t.z, t.color);
     }
 
@@ -470,6 +527,33 @@ export class PlayScene {
     this.celebrateDoor();
   }
 
+  /**
+   * One firework of the cheer, thrown somewhere he is looking.
+   *
+   * Around HIM rather than around the door, for the same reason the burst is:
+   * with tight fog and a low camera the doorway is usually off screen, so a
+   * celebration that only happens there is a celebration he never sees.
+   */
+  private cheerPulse(): void {
+    const a = Math.random() * Math.PI * 2;
+    const r = 3 + Math.random() * 7;
+    const x = this.move.pos.x + Math.cos(a) * r;
+    const z = this.move.pos.z + Math.sin(a) * r;
+    const y = this.terrain.heightAt(x, z) + 1.5 + Math.random() * 2.5;
+    const hex = Math.random() < 0.5 ? this.def.palette.accent : this.def.palette.floorA;
+    this.motes.burst(x, y, z, 55, hex, this.def.palette.accent, 8.5);
+  }
+
+  /** Debug only: hand him a friend, so the parade can be photographed. */
+  debugAddFriend(): void {
+    for (const def of this.def.collectibles) {
+      if (def.onFind !== 'follow' || this.roster.has(def.id)) continue;
+      this.roster.add(def);
+      this.followers.add(def, this.move.pos.x, this.move.pos.z + 2);
+      return;
+    }
+  }
+
   /** Debug only: throw a firework at the player so it can be photographed. */
   testBurst(): void {
     this.motes.burst(
@@ -483,26 +567,74 @@ export class PlayScene {
     this.shockwave.fire(this.move.pos.x, this.move.pos.y - 0.4, this.move.pos.z, this.def.palette.accent);
   }
 
-  /**
-   * The moment the room is finished. Three signals at once, none of them a
-   * word: colour, motion, and a rising phrase.
-   */
+  /** The room is finished: hand it to the celebration state machine. */
   private celebrateDoor(): void {
-    const d = this.door.position;
+    this.celebration.start();
+  }
+
+  /**
+   * Cheer, then run, then wait.
+   *
+   * The cheer is where the value is and it is nearly free: every painted prop
+   * in the room pops again on a wave radiating out from him, which costs one
+   * float per object because the pop was already a function of `aPaintTime` in
+   * the vertex shader. That also means the moment lands with full force when he
+   * has found nobody at all -- which is the likely case the very first time.
+   */
+  private onCelebrationPhase(phase: CelebrationPhase): void {
     const accent = this.def.palette.accent;
-    this.motes.burst(d.x, d.y + 3.0, d.z, 110, this.def.door.palette[0] ?? accent, accent, 10);
-    this.shockwave.fire(d.x, d.y + 0.2, d.z, accent);
+    const d = this.door.position;
 
-    // The door is very probably OFF SCREEN when this fires -- the fog is tight
-    // and the camera is low. So the moment has to also happen where he is
-    // looking, or he finishes a room and never learns anything changed.
-    this.motes.burst(this.move.pos.x, this.move.pos.y + 1.4, this.move.pos.z, 60, accent, accent, 7);
-    this.shockwave.fire(this.move.pos.x, this.move.pos.y - 0.4, this.move.pos.z, accent);
-    this.beckon();
+    if (phase === 'cheer') {
+      // The whole room bounces, outward from wherever he happens to be.
+      this.props.cheer(this.move.pos.x, this.move.pos.z);
+      this.collectibles.cheer(this.move.pos.x, this.move.pos.z);
+      this.followers.cheer(this.time);
 
+      this.motes.burst(d.x, d.y + 3.0, d.z, 110, this.def.door.palette[0] ?? accent, accent, 10);
+      this.shockwave.fire(d.x, d.y + 0.2, d.z, accent);
+      // The door is very probably OFF SCREEN when this fires -- the fog is
+      // tight and the camera is low. So the moment has to also happen where he
+      // is looking, or he finishes a room and never learns anything changed.
+      this.motes.burst(
+        this.move.pos.x,
+        this.move.pos.y + 1.4,
+        this.move.pos.z,
+        60,
+        accent,
+        accent,
+        7,
+      );
+      this.shockwave.fire(this.move.pos.x, this.move.pos.y - 0.4, this.move.pos.z, accent);
+      this.cheerSound();
+      buzz();
+      return;
+    }
+
+    if (phase === 'run') {
+      // In FRONT of the doorway, on the room side: a crowd standing inside it
+      // is hidden by the wall, and the crowd only works if he can see it.
+      this.followers.runTo(d.x, d.z + GATHER_M);
+      // No creatures yet? Then the ribbon of sparks is still the only signpost.
+      if (this.followers.count === 0) this.beckon();
+    }
+  }
+
+  /**
+   * Your own voice if there is one, and his animals if there is not.
+   *
+   * The fallback is not a lesser version: every creature chirps its own note,
+   * and because they are all degrees of the scene's pentatonic scale, a dozen
+   * at once comes out as a chord rather than a racket. Nothing about finishing
+   * a room may depend on a recording existing.
+   */
+  private cheerSound(): void {
+    const spoke = this.voice?.play(this.audio) ?? false;
+    if (!spoke) {
+      for (const def of this.roster.parade(MAX_PARADE)) this.audio.play(def.note);
+    }
     // A rising arpeggio, which in a pentatonic scale cannot come out wrong.
     for (const degree of [0, 2, 4, 7, 9]) this.audio.play([degree]);
-    buzz();
   }
 
   /**
@@ -558,6 +690,9 @@ export class PlayScene {
   dispose(): void {
     this.props.dispose();
     this.collectibles.dispose();
+    // Per-scene bodies for an app-level list: exactly the shape of the leak
+    // `npm run rooms` caught once already.
+    this.followers.dispose();
     this.stage.dispose();
     this.door.dispose();
     this.player.dispose();

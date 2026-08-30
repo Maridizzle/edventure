@@ -132,6 +132,41 @@ export class AudioEngine {
   }
 
   /**
+   * Decode recorded audio. Needs a running context, so it can only happen
+   * after the first touch -- which is fine, since nothing plays before then.
+   */
+  async decode(data: ArrayBuffer): Promise<AudioBuffer | null> {
+    const ctx = this.ctx;
+    if (!ctx) return null;
+    try {
+      // decodeAudioData detaches the buffer it is given, and a recording has to
+      // survive being played twice. Hand it a copy.
+      return await ctx.decodeAudioData(data.slice(0));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Play a recorded sound through the same bus as everything else, so it ducks
+   * under the compressor with the pad and the boings instead of clipping over
+   * the top of them.
+   */
+  playBuffer(buffer: AudioBuffer, gain = 1): boolean {
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master || ctx.state !== 'running') return false;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g);
+    g.connect(master);
+    src.start();
+    return true;
+  }
+
+  /**
    * The ambient bed. Gains voices and brightness as the room fills, so
    * progress is audible even when he is watching the ball rather than the room.
    */

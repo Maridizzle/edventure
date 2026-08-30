@@ -55,9 +55,12 @@ npm run dev          # LAN-accessible; open the Network URL on a phone
 | `npm run build:standalone` | one self-contained HTML file — the tap-to-play link |
 | `npm run smoke <url\|file>` | headless render + paint check, writes `scratch/shots/` |
 | `npm run offline <url>` | proves the service worker serves the app with the network cut |
-| `npm run rooms <url>` | walks through ten doors and asserts nothing leaks |
+| `npm run rooms <url>` | walks a parade through ten doors and asserts nothing leaks |
 
-Append `?debug=1` to any URL for the stats overlay and a live blit of the paint mask.
+Append `?debug=1` to any URL for the stats overlay and a live blit of the paint mask. It
+also exposes `__burst()`, `__openDoor()`, `__friend()`, `__parade()`, `__exit()` and
+`__mem()` on `window`, which is how the checks above photograph moments that are over in
+200 ms instead of trying to catch one by luck.
 
 `BASE_PATH` controls where the app expects to be served from; CI sets `/edventure/` for the
 Pages project site. Getting this wrong doesn't break the first load — it breaks the
@@ -156,6 +159,63 @@ left, and the very first run of that check found a leak: the sky hangs off `scen
 than `worldGroup`, so the teardown traverse never reached it and every room leaked exactly
 one geometry. Ten transitions must return the geometry and texture counters to baseline.
 
+It hands him a parade *before* taking the baseline, deliberately. Followers are per-scene
+bodies built from an app-level list — the same shape as the bug above — and with an empty
+roster none of that code runs and the check passes while proving nothing.
+
+### The parade, and the celebration
+
+Everyone he finds walks along behind him, in every room, for the rest of the session. The
+line over his shoulder getting longer **is** the progress bar — there is no other one, and
+there are no words in this one.
+
+That only works because of where the pieces live. `game/Roster.ts` is app-level, beside the
+audio engine: a scene is thrown away every time he walks through a door, so a scene-owned
+list of friends would reset every couple of minutes. `world/Followers.ts` is per-scene and
+rebuilds the bodies from that list on arrival. Finding a friend adds it to the parade *that
+second*, not in the next room.
+
+They follow a **breadcrumb trail** — a ring buffer of where he has recently been, each
+friend sampling it further back. The path already went around whatever he went around, so
+nobody pathfinds and nobody walks through a gumdrop hill. Side offsets are taken along the
+*normal to the trail*, not along a fixed axis; offsetting along X quietly collapses the line
+into a pile the moment he happens to walk east, which is exactly what it did until a test
+measured the spacing.
+
+`fx/Celebration.ts` is the cheer → run → wait state machine, and it is deliberately pure
+logic with no three.js in it, because the rule that it can never strand him is a rule about
+this state machine alone. Every path reaches `wait`, including the two that matter: nobody
+found yet, and somebody wedged behind a fixture who never arrives.
+
+The best part of the cheer is nearly free. Props already animate from an `aPaintTime`
+attribute in the vertex shader, so `Props.cheer(x, z)` rewrites that value with a delay
+proportional to distance — an entire room of candy bouncing outward from him, for one float
+per object and no CPU matrix work. A time in the *future* means "already in colour, waiting
+to pop"; without that one ternary in the shader the room drains to gray ahead of the wave.
+It also means the moment lands at full strength when he has found nothing at all, which is
+the likely case the first time he ever finishes a room.
+
+Once the crowd is gathered at the doorway, **they** are the signpost and the ribbon of
+sparks stands down. Until then — including if somebody is still stuck — the ribbon keeps
+pointing the way.
+
+### The grown-up panel
+
+Hold a screen corner for two seconds. Three icons: record, play, delete. No letters, so
+rule #1 holds absolutely rather than by exception.
+
+Behind it is a cheer recorded in your own voice, played when a room is finished. **It never
+leaves the phone** — `MediaRecorder` into an IndexedDB blob, read back and played through
+the local audio graph. There is no upload and no server in this feature at all, which is the
+only acceptable shape for a recording of a family inside a child's app.
+
+The fallback is not a lesser version, and nothing about finishing a room may depend on the
+recording existing. No recording, a refused microphone, a container the browser will not
+decode: every one of those returns false and the animals cheer instead, each chirping its
+own note, all of them degrees of the scene's pentatonic scale so a dozen at once is a chord.
+The microphone is never prompted during play — it can only ever be reached by an adult who
+went looking for it.
+
 ### Hidden objects
 
 Two ways of hiding, mixed deliberately. `disguise` collectibles have no body at all until he
@@ -248,7 +308,9 @@ Notably **not** the mask upload — that's under 1% of the frame.
 | U3 tight fog that stays cleared where he has *been* | done |
 | U4 hidden objects: disguised + tucked, warmth guidance | done |
 | S3 door opens at 50% → walk through → a fresh room | done |
-| U5 parade of found creatures, silhouette pips | next |
+| U5 parade of found friends, following him through every door | done |
+| U6 the celebration: room-wide cheer wave, run for the door, your recorded voice | done |
+| U7 silhouette pips for the collection | next |
 | S4 the candy dinosaur | |
 | S5 forest clearing (proves the grammar generalizes) | |
 | S6 indoor rooms, tiny worlds, vehicles | |

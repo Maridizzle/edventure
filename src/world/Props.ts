@@ -285,6 +285,34 @@ export class Props {
     }
   }
 
+  /**
+   * Every painted prop pops again, in a wave radiating out from (x, z).
+   *
+   * This is the best value in the whole celebration. The pop is already a pure
+   * function of `aPaintTime` in the vertex shader, so a whole room of candy
+   * bouncing in sequence costs ONE FLOAT per object and no CPU matrix work --
+   * scheduling a time in the future just means "pop when the wave gets here".
+   *
+   * It also means the moment lands even when he has found nothing at all,
+   * which matters: the first room he finishes, he may have no friends yet.
+   */
+  cheer(x: number, z: number, waveSpeed = 18): void {
+    if (this.paintedIds.length === 0) return;
+    for (let i = 0; i < this.paintedIds.length; i++) {
+      const id = this.paintedIds[i]!;
+      const dx = this.px[id]! - x;
+      const dz = this.pz[id]! - z;
+      const k = this.kinds[this.kindOf[id]!]!;
+      k.paintTime.array[this.slotOf[id]!] = this.time + Math.sqrt(dx * dx + dz * dz) / waveSpeed;
+    }
+    // One whole-attribute upload per kind rather than a range per prop: the
+    // wave touches most of the room, so tight ranges would be pure bookkeeping.
+    for (const k of this.kinds) {
+      k.paintTime.clearUpdateRanges();
+      k.paintTime.needsUpdate = true;
+    }
+  }
+
   /** A painted prop to sparkle, or null. Keeps a finished room feeling alive. */
   randomPainted(): { x: number; y: number; z: number; color: number } | null {
     if (this.paintedIds.length === 0) return null;

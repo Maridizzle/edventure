@@ -27,7 +27,10 @@ uniform float uTime;
 
 void main() {
   float age = aPaintTime < 0.0 ? -1.0 : uTime - aPaintTime;
-  vPainted = aPaintTime < 0.0 ? 0.0 : clamp(age / 0.30, 0.0, 1.0);
+  // A paint time in the FUTURE is a cheer scheduled on something already
+  // painted, so it stays in colour and simply waits its turn to pop. Without
+  // this line the room drains to gray ahead of the wave.
+  vPainted = aPaintTime < 0.0 ? 0.0 : (age < 0.0 ? 1.0 : clamp(age / 0.30, 0.0, 1.0));
   vCol = mix(color, color * aTint, vPainted);
 
   // A bigger, bouncier pop than a plain scale-in: overshoot hard, then settle.

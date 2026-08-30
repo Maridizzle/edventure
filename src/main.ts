@@ -2,7 +2,10 @@ import { SRGBColorSpace, Vector2, WebGLRenderer } from 'three';
 import { PlayScene } from './game/PlayScene';
 import { Transition } from './game/Transition';
 import { AudioEngine } from './core/Audio/AudioEngine';
+import { VoiceStore } from './core/Audio/Voice';
+import { Roster } from './game/Roster';
 import { Joystick } from './ui/Joystick';
+import { GrownUpPanel } from './ui/GrownUpPanel';
 import { DebugOverlay } from './ui/DebugOverlay';
 import {
   QualityGovernor,
@@ -52,16 +55,25 @@ function applySize(): void {
 
 // --- scene ----------------------------------------------------------------
 //
-// The audio engine lives HERE, not in the scene: the ambient pad has to survive
-// a room change, and the first-touch unlock must not be re-run every time he
-// walks through a door.
+// Three things live HERE rather than in the scene, all for the same reason: a
+// scene is thrown away every time he walks through a door.
+//
+//  - the audio engine, so the ambient pad survives and the first-touch unlock
+//    is never re-run;
+//  - the ROSTER, so his friends come with him and the parade keeps growing --
+//    that is the whole long game, and a scene-owned list would reset every
+//    couple of minutes;
+//  - the recorded cheer, which is read from the device once.
 const audio = new AudioEngine();
+const roster = new Roster();
+const voice = new VoiceStore();
+void voice.load();
 const transition = new Transition(app);
 
 let scene = makeScene(Math.floor(Math.random() * 0xffffffff));
 
 function makeScene(seed: number): PlayScene {
-  const s = new PlayScene(seed, { ...TIERS[governor.tier] }, 1, audio);
+  const s = new PlayScene(seed, { ...TIERS[governor.tier] }, 1, audio, undefined, roster, voice);
   s.onExit = () => void goThroughDoor();
   transition.setColor(s.def.sky.fogColor);
   return s;
@@ -100,7 +112,14 @@ stick.onFirstTouch = () => {
   // one moment it can happen.
   audio.unlock();
   audio.startPad();
+  // Decode the recorded cheer now, so the first finished room does not have to
+  // wait on it.
+  void voice.prime(audio);
 };
+
+// The grown-up door: hold a screen corner for two seconds. Never surfaced to
+// him, and never prompted during play.
+const grownUp = new GrownUpPanel(app, voice, audio);
 
 // --- debug ----------------------------------------------------------------
 const debug = new DebugOverlay();
@@ -111,11 +130,17 @@ if (DebugOverlay.enabled) {
   const w = window as unknown as {
     __burst?: () => void;
     __openDoor?: () => void;
+    __friend?: () => void;
+    __parade?: () => number;
     __exit?: () => Promise<void>;
     __mem?: () => { geometries: number; textures: number };
   };
   w.__burst = () => scene.testBurst();
   w.__openDoor = () => scene.forceOpenDoor();
+  w.__friend = () => scene.debugAddFriend();
+  // Proves the parade actually rebuilt in the new room -- without this the
+  // leak check would pass trivially on a parade that silently vanished.
+  w.__parade = () => scene.followers.count;
   w.__exit = () => goThroughDoor();
   // The leak check: this teardown path had never run before rooms could be
   // left, so it gets asserted rather than eyeballed.
@@ -183,7 +208,7 @@ applySize();
 renderer.compile(scene.scene, scene.follow.camera);
 
 // --- loop -----------------------------------------------------------------
-/** Input is frozen mid-transition, so the dying room cannot be driven. */
+/** Input is frozen mid-transition and behind the grown-up panel. */
 const ZERO_INPUT = new Vector2();
 
 const FIXED = 1 / 60;
@@ -207,7 +232,8 @@ function frame(now: number): void {
   accumulator += dt;
   let steps = 0;
   while (accumulator >= FIXED && steps < MAX_SUBSTEPS) {
-    scene.fixedUpdate(transition.running ? ZERO_INPUT : stick.value, FIXED);
+    const frozen = transition.running || grownUp.open;
+    scene.fixedUpdate(frozen ? ZERO_INPUT : stick.value, FIXED);
     accumulator -= FIXED;
     steps++;
   }

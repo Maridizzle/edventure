@@ -81,6 +81,32 @@ await page.waitForTimeout(400);
 
 await page.screenshot({ path: `${OUT}/03-painted.png` });
 
+// --- the celebration ------------------------------------------------------
+//
+// Same lesson as the burst: this lasts about four seconds and every frame of
+// it looks different, so it is photographed at named moments rather than
+// whenever the script happens to finish.
+await page.evaluate(() => {
+  for (let i = 0; i < 6; i++) window.__friend?.();
+});
+await page.mouse.move(cx, cy);
+await page.mouse.down();
+await page.mouse.move(cx - 10, cy - 70, { steps: 6 });
+await page.waitForTimeout(1600);
+const parade = await page.evaluate(() => window.__parade?.() ?? 0);
+await page.screenshot({ path: `${OUT}/04-parade.png` });
+
+await page.evaluate(() => window.__openDoor?.());
+// Mid-cheer: the room is popping outward and everybody is in the air.
+await page.waitForTimeout(600);
+await page.screenshot({ path: `${OUT}/05-cheer.png` });
+
+// Then they break for the door, so keep driving him after them.
+await page.waitForTimeout(3600);
+await page.screenshot({ path: `${OUT}/06-gathered.png` });
+await page.mouse.up();
+console.log(`parade: ${parade} friends following`);
+
 const stats = await page.evaluate(() => {
   const el = document.getElementById('debug');
   return el ? el.textContent : null;
@@ -97,6 +123,10 @@ let failed = false;
 if (errors.length) {
   console.error('PAGE ERRORS:');
   for (const e of errors) console.error('  ' + e);
+  failed = true;
+}
+if (parade < 2) {
+  console.error(`FAIL: only ${parade} followers — the parade did not build.`);
   failed = true;
 }
 if (coverage === undefined) {

@@ -307,6 +307,21 @@ export class Collectibles {
     out.push({ def: h.def, x: h.x, y: h.y, z: h.z });
   }
 
+  /**
+   * The ones he has already found join the room's cheer, on the same outward
+   * wave as the props. Same trick, same cost: one float each.
+   */
+  cheer(x: number, z: number, waveSpeed = 18): void {
+    for (const h of this.items) {
+      if (!h.found) continue;
+      const d = Math.hypot(h.x - x, h.z - z);
+      const k = this.kinds[h.kindIndex]!;
+      k.paintTime.array[h.slot] = this.time + d / waveSpeed;
+      k.paintTime.clearUpdateRanges();
+      k.paintTime.needsUpdate = true;
+    }
+  }
+
   get foundCount(): number {
     let c = 0;
     for (const h of this.items) if (h.found) c++;

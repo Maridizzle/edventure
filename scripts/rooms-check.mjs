@@ -46,6 +46,19 @@ await page.mouse.down();
 await page.mouse.move(230, 640, { steps: 4 });
 await page.waitForTimeout(1200);
 
+// Give him a parade FIRST. The followers are per-scene bodies built from an
+// app-level list, so they are rebuilt and thrown away on every transition --
+// exactly the shape of the leak this check caught the first time it ran. With
+// an empty roster none of that code would execute and the check would pass
+// while proving nothing.
+await page.evaluate(() => {
+  for (let i = 0; i < 8; i++) window.__friend?.();
+});
+await page.waitForTimeout(300);
+const paradeSize = await page.evaluate(() => window.__parade?.() ?? 0);
+console.log(`parade: ${paradeSize} friends carried through every door`);
+if (paradeSize < 2) fail(`only ${paradeSize} followers — the leak check would prove nothing`);
+
 // Open the door and photograph the celebration mid-flight.
 await page.evaluate(() => window.__openDoor?.());
 await page.waitForTimeout(220);
@@ -64,6 +77,11 @@ for (let i = 0; i < ROUNDS; i++) {
 
 // Give the GPU resource lists a moment to settle after the last swap.
 await page.waitForTimeout(800);
+
+// The friends must have come with him, in every room, all ten times.
+const paradeAfter = await page.evaluate(() => window.__parade?.() ?? 0);
+console.log(`parade after ${ROUNDS} rooms: ${paradeAfter}`);
+if (paradeAfter !== paradeSize) fail(`parade changed size across rooms: ${paradeSize} -> ${paradeAfter}`);
 const after = await page.evaluate(() => window.__mem?.());
 console.log(`after ${ROUNDS} rooms: ${after.geometries} geometries, ${after.textures} textures`);
 

@@ -114,6 +114,94 @@
         opacity: 1;
       }
 
+      /* --- the grown-up door: hold a corner for two seconds ---
+         Invisible until it is most of the way through the hold, so an adult
+         holding on purpose gets feedback and a child brushing the corner
+         sees nothing at all. */
+      #gp-hotspot {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 17vmin;
+        height: 17vmin;
+        max-width: 110px;
+        max-height: 110px;
+        z-index: 6;
+        touch-action: none;
+      }
+      #gp-hotspot::after {
+        content: '';
+        position: absolute;
+        top: 22%;
+        right: 22%;
+        width: 30%;
+        height: 30%;
+        border-radius: 50%;
+        border: 3px solid rgba(255, 255, 255, 0.55);
+        opacity: 0;
+        transform: scale(0.3);
+      }
+      #gp-hotspot.gp-holding::after {
+        animation: gp-hold 2s ease-in forwards;
+      }
+      @keyframes gp-hold {
+        0%,
+        45% {
+          opacity: 0;
+          transform: scale(0.3);
+        }
+        100% {
+          opacity: 0.9;
+          transform: scale(1.6);
+        }
+      }
+
+      #gp-scrim {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: rgba(14, 16, 22, 0.82);
+        z-index: 20;
+        touch-action: none;
+      }
+      .gp-row {
+        display: flex;
+        gap: 7vmin;
+      }
+      .gp-btn {
+        width: 20vmin;
+        height: 20vmin;
+        max-width: 116px;
+        max-height: 116px;
+        padding: 0;
+        border: none;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.12);
+        display: grid;
+        place-items: center;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .gp-btn svg {
+        width: 55%;
+        height: 55%;
+        fill: #ffffff;
+        stroke: #ffffff;
+      }
+      .gp-record svg {
+        fill: #ff5f6d;
+        stroke: #ff5f6d;
+      }
+      .gp-btn.gp-live {
+        background: rgba(255, 95, 109, 0.3);
+        animation: breathe 1.1s ease-in-out infinite;
+      }
+      .gp-btn.gp-off {
+        opacity: 0.22;
+        pointer-events: none;
+      }
+
       /* --- debug overlay: the ONLY place text may exist. ?debug=1 only. --- */
       #debug {
         position: absolute;
