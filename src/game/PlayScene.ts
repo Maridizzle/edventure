@@ -82,6 +82,32 @@ const TWINKLE_EVERY = 0.55;
 const GATHER_M = 4.2;
 
 /**
+ * The hot/cold tell, in sound.
+ *
+ * Not a repeating ping -- a rising three-note phrase, one note per threshold
+ * crossed on the way in. That makes it self-limiting by construction: three
+ * notes per approach and then silence, so it can never become a drone however
+ * long he mills around. Degrees of the scene's pentatonic scale, like
+ * everything else, so it cannot come out wrong.
+ */
+/**
+ * The thresholds are low because they have to be. Warmth falls off with the
+ * square of distance over 7.5 m, and the creature is found at 2.6 m -- so the
+ * highest value he can ever be standing in before it pops is about 0.34. Notes
+ * pitched at 0.3/0.55/0.8 would simply never have sounded.
+ */
+const WARM_STEPS = [0.08, 0.18, 0.30];
+const WARM_NOTES = [2, 4, 7];
+/** Dead band, so wobbling on a threshold does not machine-gun the same note. */
+const WARM_HYSTERESIS = 0.04;
+
+/**
+ * How many friends have to be gathered at the door before the spark ribbon
+ * stands down. One small animal across a foggy room is not a signpost.
+ */
+const CROWD_IS_A_SIGNPOST = 3;
+
+/**
  * Haptics, only once the page has genuinely been interacted with. Chrome logs
  * a console error for a vibrate before user activation, and it is absent on
  * iOS entirely -- neither is worth a crash over a nicety.
@@ -137,6 +163,8 @@ export class PlayScene {
   private readonly voice: VoiceStore | null;
   private sky;
   private twinkleTimer = 0;
+  /** Which warmth thresholds the tell has already sounded on this approach. */
+  private warmStep = 0;
   private fogCenter = new Vector2();
 
   private time = 0;
@@ -409,20 +437,15 @@ export class PlayScene {
       this.motes.burst(p.x, p.y + 0.9, p.z, 44, p.color, this.def.palette.accent);
       this.shockwave.fire(p.x, p.y + 0.15, p.z, p.color);
       this.audio.play(p.note);
-      // Whatever was pretending to be this prop now hatches out of it.
-      this.collectibles.onPropPainted(p.id, this.found);
+      // Whatever was pretending to be this prop now hatches out of it, and
+      // that prop -- only that one -- gets out of the way.
+      this.collectibles.onPropPainted(p, this.found, (id) => this.props.hide(id));
     }
 
     this.collectibles.setTime(this.time);
     this.collectibles.checkProximity(this.move.pos.x, this.move.pos.z, blob.radius, this.found);
     for (let i = 0; i < this.found.length; i++) {
       const f = this.found[i]!;
-      if (f.def.hide === 'disguise') {
-        // The ordinary prop it was impersonating gets out of the way.
-        for (const h of this.collectibles.items) {
-          if (h.def === f.def && h.propId >= 0) this.props.hide(h.propId);
-        }
-      }
       // He keeps it, and it starts following him THIS second rather than in
       // the next room. `add` returns false for one he already owns, so meeting
       // the same kind again in a later room never clones anybody.
@@ -447,6 +470,8 @@ export class PlayScene {
     }
     this.found.length = 0;
     if (TOUCH_SCRATCH.length > 0) buzz();
+
+    this.tellWarmth();
 
     // Fog lifts wherever he has BEEN, not merely where he painted.
     this.explored.visit(this.move.pos.x, this.move.pos.z);
@@ -497,7 +522,10 @@ export class PlayScene {
     // Once the crowd is gathered at the doorway THEY are the signpost, so the
     // ribbon of sparks stands down. Until then -- including if somebody is
     // still stuck behind a gumdrop -- it keeps pointing the way.
-    if (this.door.update(dt) && !(this.followers.count > 0 && this.followers.allArrived)) {
+    if (
+      this.door.update(dt) &&
+      !(this.followers.count >= CROWD_IS_A_SIGNPOST && this.followers.allArrived)
+    ) {
       this.beckon();
     }
     this.motes.update(dt);
@@ -542,6 +570,43 @@ export class PlayScene {
     const y = this.terrain.heightAt(x, z) + 1.5 + Math.random() * 2.5;
     const hex = Math.random() < 0.5 ? this.def.palette.accent : this.def.palette.floorA;
     this.motes.burst(x, y, z, 55, hex, this.def.palette.accent, 8.5);
+  }
+
+  /**
+   * Debug only: how hot the floor is under him right now.
+   *
+   * Lets the smoke test photograph the warmth glow on the frame it is actually
+   * strongest, rather than shooting blind and hoping -- the same lesson as the
+   * fireworks, which shipped invisible because every screenshot was taken after
+   * they had decayed.
+   */
+  debugWarmth(): number {
+    return this.collectibles.warmthAt(this.move.pos.x, this.move.pos.z);
+  }
+
+  /**
+   * Debug only: turn the warmth glow off, so a check can photograph the same
+   * frame with and without it and measure what it is actually worth in pixels.
+   *
+   * "Does this effect read?" is the question that shipped invisible fireworks
+   * for a whole release. Eyeballing a software-rendered screenshot is how that
+   * happened; a number is not.
+   */
+  debugWarmGain(v: number): void {
+    this.groundMat.uniforms.uWarmGain!.value = v;
+  }
+
+  /** Debug only: which way the nearest unfound thing lies, and how far. */
+  debugNearestHidden(): { dx: number; dz: number; d: number } | null {
+    let best: { dx: number; dz: number; d: number } | null = null;
+    for (const h of this.collectibles.items) {
+      if (h.found) continue;
+      const dx = h.x - this.move.pos.x;
+      const dz = h.z - this.move.pos.z;
+      const d = Math.hypot(dx, dz);
+      if (!best || d < best.d) best = { dx: dx / (d || 1), dz: dz / (d || 1), d };
+    }
+    return best;
   }
 
   /** Debug only: hand him a friend, so the parade can be photographed. */
@@ -615,8 +680,8 @@ export class PlayScene {
       // In FRONT of the doorway, on the room side: a crowd standing inside it
       // is hidden by the wall, and the crowd only works if he can see it.
       this.followers.runTo(d.x, d.z + GATHER_M);
-      // No creatures yet? Then the ribbon of sparks is still the only signpost.
-      if (this.followers.count === 0) this.beckon();
+      // Too few to read as a crowd? The ribbon of sparks is still the signpost.
+      if (this.followers.count < CROWD_IS_A_SIGNPOST) this.beckon();
     }
   }
 
@@ -660,6 +725,27 @@ export class PlayScene {
         d.z + dz * t,
         this.def.palette.accent,
       );
+    }
+  }
+
+  /**
+   * Hot and cold, out loud.
+   *
+   * The floor already glows near a hidden thing, but he is often looking at the
+   * ball rather than the ground. Sound is the half of hot-and-cold that reaches
+   * him anyway -- and this half existed as a dead method with a comment saying
+   * it drove an audio tell, wired to nothing, for the whole life of the
+   * feature.
+   */
+  private tellWarmth(): void {
+    const w = this.collectibles.warmthAt(this.move.pos.x, this.move.pos.z);
+    // Walking away re-arms the phrase, so approaching again plays it again.
+    while (this.warmStep > 0 && w < WARM_STEPS[this.warmStep - 1]! - WARM_HYSTERESIS) {
+      this.warmStep--;
+    }
+    if (this.warmStep < WARM_STEPS.length && w >= WARM_STEPS[this.warmStep]!) {
+      this.audio.play([WARM_NOTES[this.warmStep]!], 'bloop');
+      this.warmStep++;
     }
   }
 

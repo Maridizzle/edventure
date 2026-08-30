@@ -4,6 +4,7 @@ import { Transition } from './game/Transition';
 import { AudioEngine } from './core/Audio/AudioEngine';
 import { VoiceStore } from './core/Audio/Voice';
 import { Roster } from './game/Roster';
+import { starterFriend } from './content/collectibles/friend';
 import { Joystick } from './ui/Joystick';
 import { GrownUpPanel } from './ui/GrownUpPanel';
 import { DebugOverlay } from './ui/DebugOverlay';
@@ -66,11 +67,28 @@ function applySize(): void {
 //  - the recorded cheer, which is read from the device once.
 const audio = new AudioEngine();
 const roster = new Roster();
+// He starts with a friend. A five-year-old cannot be TOLD that things follow
+// him once he finds them -- he has to see it happen, and the cheapest way to
+// show him is for it to already be true on frame one. Everything he finds
+// afterwards adds to something he already understands.
+roster.add(starterFriend);
 const voice = new VoiceStore();
 void voice.load();
 const transition = new Transition(app);
 
-let scene = makeScene(Math.floor(Math.random() * 0xffffffff));
+/**
+ * `?seed=N` pins the first room. Rooms are otherwise random, which makes a
+ * screenshot of anything in particular a matter of luck -- and the checks in
+ * `scripts/` need to photograph specific moments, not whatever turned up.
+ */
+const seedParam = new URLSearchParams(location.search).get('seed');
+const firstSeed = seedParam !== null ? Number(seedParam) >>> 0 : randomSeed();
+
+function randomSeed(): number {
+  return Math.floor(Math.random() * 0xffffffff);
+}
+
+let scene = makeScene(firstSeed);
 
 function makeScene(seed: number): PlayScene {
   const s = new PlayScene(seed, { ...TIERS[governor.tier] }, 1, audio, undefined, roster, voice);
@@ -89,7 +107,7 @@ async function goThroughDoor(): Promise<void> {
   if (transition.running) return;
   await transition.run(() => {
     const old = scene;
-    scene = makeScene(Math.floor(Math.random() * 0xffffffff));
+    scene = makeScene(randomSeed());
     old.dispose();
     applySize();
     renderer.compile(scene.scene, scene.follow.camera);
@@ -132,6 +150,9 @@ if (DebugOverlay.enabled) {
     __openDoor?: () => void;
     __friend?: () => void;
     __parade?: () => number;
+    __warmth?: () => number;
+    __hidden?: () => { dx: number; dz: number; d: number } | null;
+    __warmGain?: (v: number) => void;
     __exit?: () => Promise<void>;
     __mem?: () => { geometries: number; textures: number };
   };
@@ -141,6 +162,11 @@ if (DebugOverlay.enabled) {
   // Proves the parade actually rebuilt in the new room -- without this the
   // leak check would pass trivially on a parade that silently vanished.
   w.__parade = () => scene.followers.count;
+  w.__warmth = () => scene.debugWarmth();
+  // Lets a check DRIVE toward a hidden thing rather than hoping to stumble on
+  // one, which is the only way to photograph the warmth glow reliably.
+  w.__hidden = () => scene.debugNearestHidden();
+  w.__warmGain = (v) => scene.debugWarmGain(v);
   w.__exit = () => goThroughDoor();
   // The leak check: this teardown path had never run before rooms could be
   // left, so it gets asserted rather than eyeballed.

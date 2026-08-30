@@ -156,9 +156,10 @@ export interface CollectibleDef {
   /**
    * `disguise` = stands in for an ordinary prop, invisible until he bumps the
    * thing it is pretending to be. `tucked` = a real object placed somewhere the
-   * terrain or a fixture hides it, so he has to go and look.
+   * terrain or a fixture hides it, so he has to go and look. `given` = never
+   * hidden anywhere; he simply has it, and it belongs in no scene's list.
    */
-  hide: 'disguise' | 'tucked';
+  hide: 'disguise' | 'tucked' | 'given';
   /** For `disguise`: which prop kind it masquerades as. */
   disguiseAs?: string;
   /** follow = joins the parade behind him. collect = flies away. park = stays. */

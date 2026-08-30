@@ -57,10 +57,13 @@ npm run dev          # LAN-accessible; open the Network URL on a phone
 | `npm run offline <url>` | proves the service worker serves the app with the network cut |
 | `npm run rooms <url>` | walks a parade through ten doors and asserts nothing leaks |
 
-Append `?debug=1` to any URL for the stats overlay and a live blit of the paint mask. It
-also exposes `__burst()`, `__openDoor()`, `__friend()`, `__parade()`, `__exit()` and
-`__mem()` on `window`, which is how the checks above photograph moments that are over in
-200 ms instead of trying to catch one by luck.
+Append `?debug=1` to any URL for the stats overlay and a live blit of the paint mask, and
+`?seed=N` to pin the first room — a screenshot of anything in particular is otherwise a
+matter of luck. `?debug=1` also exposes `__burst()`, `__openDoor()`, `__friend()`,
+`__parade()`, `__warmth()`, `__hidden()`, `__warmGain()`, `__exit()` and `__mem()` on
+`window`. That is how the checks above photograph moments that are over in 200 ms, drive
+*at* a hidden thing rather than hoping to stumble on one, and measure an effect instead of
+squinting at it.
 
 `BASE_PATH` controls where the app expects to be served from; CI sets `/edventure/` for the
 Pages project site. Getting this wrong doesn't break the first load — it breaks the
@@ -169,6 +172,12 @@ Everyone he finds walks along behind him, in every room, for the rest of the ses
 line over his shoulder getting longer **is** the progress bar — there is no other one, and
 there are no words in this one.
 
+**He starts with one.** A five-year-old cannot be told that things follow him once he finds
+them; he has to see it happen, and the cheapest way to show him is for it to already be true
+on frame one. The starter dog is a `hide: 'given'` collectible that appears in no scene's
+list, seeded into the roster before the first room exists — the plumbing built for surviving
+doors already covers it, so it is one line.
+
 That only works because of where the pieces live. `game/Roster.ts` is app-level, beside the
 audio engine: a scene is thrown away every time he walks through a door, so a scene-owned
 list of friends would reset every couple of minutes. `world/Followers.ts` is per-scene and
@@ -224,9 +233,31 @@ ones are real objects placed by a scoring pass that seeks spots the terrain or a
 conceals — only possible because the camera is shallow enough for hills to occlude.
 
 The safety net is the **warmth field**: each hiding place bakes a radial gradient into the
-field texture's G channel, which the ground shader already sampled and which was previously
-unused. Near a hidden thing the floor runs hotter and sparkles. Hot-and-cold is the oldest
-wordless mechanic there is, and it is what stops a hidden object becoming a dead end.
+field texture's G channel, and near a hidden thing the floor ripples in rings that run inward
+toward it. Hot-and-cold is the oldest wordless mechanic there is, and it is what stops a
+hidden object becoming a dead end.
+
+Three things about it are load-bearing, and all three were wrong at first:
+
+- **It must not be multiplied by paint coverage.** It was, for the whole life of the feature,
+  which drew the glow only on floor he had already driven over. That is a receipt, not
+  guidance — hidden things are by construction somewhere he has *not* been.
+- **Rings, not a tint.** `bakeWarmth` stores the falloff squared, so its square root is a
+  linear ramp and one minus that is the normalised *distance* to the hidden thing, free, out
+  of a channel that already existed. Rings drawn on that distance converge on the spot. A
+  plain tint cannot do this job: it comes out the accent colour, which is the colour paint
+  leaves behind, so it reads as "some floor got coloured in" rather than as a signal.
+- **The find radius has to leave the glow room to climb.** Warmth falls off with distance, so
+  a generous find radius fires the reveal before the guidance ever gets warm. At 4 m the glow
+  could only reach 0.15 before the creature popped; at 2.6 m it reaches 0.34, for the same
+  number of finds. `npm run smoke` measures what the glow is worth by photographing the same
+  frame with it on and off and counting the pixels that differ — because "does this effect
+  read?" is the exact question that shipped invisible fireworks once already, and a person
+  looking at a picture is how that happened.
+
+There is a sound half too: crossing warmth thresholds plays a **rising three-note phrase**,
+one note per threshold, self-limiting by construction so it can never become a drone. That
+method existed with a comment saying it drove an audio tell and no caller at all.
 
 ### Particles
 
@@ -310,7 +341,8 @@ Notably **not** the mask upload — that's under 1% of the frame.
 | S3 door opens at 50% → walk through → a fresh room | done |
 | U5 parade of found friends, following him through every door | done |
 | U6 the celebration: room-wide cheer wave, run for the door, your recorded voice | done |
-| U7 silhouette pips for the collection | next |
+| U7 a friend from frame one; warmth that actually guides; finds that happen | done |
+| U8 silhouette pips for the collection | next |
 | S4 the candy dinosaur | |
 | S5 forest clearing (proves the grammar generalizes) | |
 | S6 indoor rooms, tiny worlds, vehicles | |
@@ -324,4 +356,8 @@ These three are meant to be turned after watching him play, not reasoned about:
 
 - `stage.width` in the scene file — how much room there is to cover.
 - `trail.radiusM` in the character file — how fast painting goes.
-- `GATE_THRESHOLD` — how much counts as done (0.70, and it must never be 1.0).
+- `GATE` — how much counts as done (0.50, and it must never be 1.0).
+- `FIND_RADIUS_M` and `DISGUISE_CLAIMS` — how often he meets somebody. A play simulation
+  (`src/world/Finding.test.ts`) says the radius barely moves the find rate; hiding each
+  creature in three props and letting them sit nearer the spawn is what took the median time
+  to his first friend from about 19 seconds to about 7.

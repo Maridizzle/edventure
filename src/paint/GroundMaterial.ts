@@ -53,6 +53,7 @@ export function createGroundMaterial(o: GroundMaterialOpts): ShaderMaterial {
       uGrayTint: { value: linear(o.palette.grayTint) },
       uLightDir: { value: o.lightDir.clone().normalize() },
       uTime: { value: 0 },
+      uWarmGain: { value: 1 },
       uHeightMin: { value: o.heightMin },
       uHeightRange: { value: o.heightRange },
       uFogCenter: { value: new Vector2() },

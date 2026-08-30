@@ -13,7 +13,7 @@ import type { AreaTransform } from '../core/AreaTransform';
 import type { CollectibleDef, SceneDef } from '../content/types';
 import type { Placed } from './Layout';
 import type { Terrain } from './Terrain';
-import type { Props } from './Props';
+import type { Props, PropTouch } from './Props';
 
 /**
  * The hidden things, and the guidance that guarantees he can find them.
@@ -35,8 +35,36 @@ import type { Props } from './Props';
  */
 
 const WARMTH_RADIUS_M = 7.5;
-/** How close he must get. Generous on purpose. */
-const FIND_RADIUS_M = 1.9;
+/**
+ * How close he must get.
+ *
+ * Widened from 1.9, but far less than it first looked like it should be. A
+ * play simulation says the radius barely moves the find rate at all -- what
+ * moved it was hiding each creature in several props and letting them sit
+ * nearer the spawn. And the radius has a cost that is easy to miss: the warmth
+ * glow is a function of distance, so a big find radius fires the reveal before
+ * the guidance ever gets warm. At 4.0 m the glow could only ever reach 0.15
+ * before the creature popped, which is the whole hot end of hot-and-cold gone.
+ * At 2.6 m it reaches 0.34 for the same number of finds.
+ */
+const FIND_RADIUS_M = 2.6;
+
+/**
+ * How many ordinary props one disguised creature may hide inside.
+ *
+ * With a single claim he had to bump the one gumdrop out of twelve that was
+ * secretly a stegosaurus. Three claims is three chances at the same creature --
+ * only the one he actually touches hatches, and the others stay gumdrops.
+ */
+const DISGUISE_CLAIMS = 3;
+
+/**
+ * Keep hidden things off the spawn apron, so he has to go somewhere -- but not
+ * so far that the first one is a minute's drive away.
+ */
+const SPAWN_CLEAR_M = 8;
+/** The first one is placed closer still, so a room always opens with a find. */
+const FIRST_SPAWN_CLEAR_M = 6;
 
 export interface Hidden {
   def: CollectibleDef;
@@ -45,8 +73,8 @@ export interface Hidden {
   z: number;
   yaw: number;
   found: boolean;
-  /** For disguised ones: the prop id standing in for it. */
-  propId: number;
+  /** For disguised ones: every prop id it may hatch out of. */
+  propIds: number[];
   kindIndex: number;
   slot: number;
 }
@@ -57,6 +85,9 @@ export interface FoundEvent {
   y: number;
   z: number;
 }
+
+/** A prop that has to get out of the way, because a creature hatched from it. */
+export type HideProp = (propId: number) => void;
 
 interface Kind {
   mesh: InstancedMesh;
@@ -90,12 +121,17 @@ export class Collectibles {
     // Group by def so each kind is a single InstancedMesh, like props.
     const perDef = new Map<number, Hidden[]>();
 
+    let tuckedSoFar = 0;
     for (let d = 0; d < defs.length; d++) {
       const def = defs[d]!;
+      // A `given` creature is one he already owns; it is never hidden anywhere,
+      // and a second copy standing in the world would fire a find for someone
+      // already walking behind him.
+      if (def.hide === 'given') continue;
       const spot =
         def.hide === 'disguise'
           ? this.pickDisguise(def, placed, props, rng)
-          : this.pickTucked(placed, terrain, rng, halfSize);
+          : this.pickTucked(placed, terrain, rng, halfSize, tuckedSoFar++ === 0);
       if (!spot) continue;
 
       const h: Hidden = {
@@ -105,7 +141,7 @@ export class Collectibles {
         z: spot.z,
         yaw: randRange(rng, 0, Math.PI * 2),
         found: false,
-        propId: spot.propId,
+        propIds: spot.propIds,
         kindIndex: d,
         slot: 0,
       };
@@ -156,22 +192,37 @@ export class Collectibles {
     mesh.setMatrixAt(slot, M4);
   }
 
-  /** Take over an existing prop of the right kind. */
+  /**
+   * Take over several existing props of the right kind.
+   *
+   * Several, not one: whichever he bumps first is the one it hatches out of,
+   * and the rest stay ordinary props. One claim meant the creature was hiding
+   * in exactly one gumdrop out of a dozen, which is a lottery rather than a
+   * hiding place.
+   */
   private pickDisguise(
     def: CollectibleDef,
     placed: Placed[],
     props: Props,
     rng: Rng,
-  ): { x: number; z: number; propId: number } | null {
+  ): { x: number; z: number; propIds: number[] } | null {
     const candidates: number[] = [];
     for (let i = 0; i < placed.length; i++) {
       if (placed[i]!.kind === def.disguiseAs && !props.isDisguised(i)) candidates.push(i);
     }
     if (candidates.length === 0) return null;
-    const id = candidates[Math.floor(rng() * candidates.length)]!;
-    props.markDisguised(id);
-    const p = placed[id]!;
-    return { x: p.x, z: p.z, propId: id };
+
+    const propIds: number[] = [];
+    for (let n = 0; n < DISGUISE_CLAIMS && candidates.length > 0; n++) {
+      const at = Math.floor(rng() * candidates.length);
+      const id = candidates.splice(at, 1)[0]!;
+      props.markDisguised(id);
+      propIds.push(id);
+    }
+    // Its nominal position is the first claim; `reveal` moves it to whichever
+    // one he actually touched.
+    const p = placed[propIds[0]!]!;
+    return { x: p.x, z: p.z, propIds };
   }
 
   /**
@@ -187,7 +238,8 @@ export class Collectibles {
     terrain: Terrain,
     rng: Rng,
     halfSize: number,
-  ): { x: number; z: number; propId: number } | null {
+    isFirst: boolean,
+  ): { x: number; z: number; propIds: number[] } | null {
     let best: { x: number; z: number; score: number } | null = null;
     const lim = halfSize - 4;
 
@@ -195,8 +247,11 @@ export class Collectibles {
       const x = randRange(rng, -lim, lim);
       const z = randRange(rng, -lim, lim);
 
-      // Never on the spawn apron -- he must have to go somewhere.
-      if (Math.hypot(x, z - (halfSize - 4.5)) < 12) continue;
+      // Never on the spawn apron -- he must have to go somewhere. But the
+      // FIRST one sits closer, so every room opens with a friend to meet
+      // rather than one he may never reach before the door does.
+      const clear = isFirst ? FIRST_SPAWN_CLEAR_M : SPAWN_CLEAR_M;
+      if (Math.hypot(x, z - (halfSize - 4.5)) < clear) continue;
 
       const here = terrain.heightAt(x, z);
       let score = 0;
@@ -223,7 +278,7 @@ export class Collectibles {
       if (!best || score > best.score) best = { x, z, score };
     }
 
-    return best ? { x: best.x, z: best.z, propId: -1 } : null;
+    return best ? { x: best.x, z: best.z, propIds: [] } : null;
   }
 
   /**
@@ -277,10 +332,20 @@ export class Collectibles {
     this.time = t;
   }
 
-  /** A disguised prop was just painted: hatch whatever was pretending to be it. */
-  onPropPainted(propId: number, out: FoundEvent[]): void {
+  /**
+   * A prop was just painted. If a creature was hiding inside that particular
+   * one, it hatches THERE -- not at wherever the first of its claims happened
+   * to be -- and only that prop gets out of the way. Its siblings stay
+   * ordinary props, so the room does not visibly lose scenery.
+   */
+  onPropPainted(prop: PropTouch, out: FoundEvent[], hideProp: HideProp): void {
     for (const h of this.items) {
-      if (h.found || h.propId !== propId) continue;
+      if (h.found || !h.propIds.includes(prop.id)) continue;
+      // Hatch where he actually is, not at whichever claim was listed first.
+      h.x = prop.x;
+      h.y = prop.y;
+      h.z = prop.z;
+      hideProp(prop.id);
       this.reveal(h, out);
     }
   }

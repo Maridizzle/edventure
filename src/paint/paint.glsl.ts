@@ -52,6 +52,8 @@ uniform vec3  uColorAccent;
 uniform vec3  uGrayTint;
 uniform vec3  uLightDir;
 uniform float uTime;
+/** 1 normally. A check can zero it to measure what the glow is actually worth. */
+uniform float uWarmGain;
 
 ${maskPars}
 ${fogPars}
@@ -81,10 +83,41 @@ void main() {
 
   vec3 base = mix(gray, colorful, p);
 
-  // The warmth tell: near a hidden thing the paint runs hotter and sparkles.
-  float sparkle = step(0.985, texture2D(uNoise, vLocal * 1.9 + uTime * 0.06).a);
-  base = mix(base, base * vec3(1.22, 1.10, 0.86), warmth * p);
-  base += uColorAccent * sparkle * warmth * p * 0.9;
+  // The warmth tell: near a hidden thing the floor ripples, in rings that run
+  // inward toward whatever is buried there.
+  //
+  // NOT multiplied by p, which is paint coverage. It used to be, and that made
+  // it useless: the only floor the glow appeared on was floor he had already
+  // driven over, so it could confirm "you walked past one" and never point at
+  // one. Hidden things are by construction somewhere he has NOT been.
+  //
+  // The rings are the part that makes it read. bakeWarmth stores the falloff
+  // SQUARED, so the square root recovers a linear ramp -- and one minus that is
+  // the normalised DISTANCE to the hidden thing, straight out of a channel that
+  // already existed. Rings drawn on that distance converge on the spot and
+  // crawl inward. A plain tint could not do this job: it comes out the same
+  // colour as paint, so it reads as "a bit of floor got coloured in" rather
+  // than as a signal. Moving rings cannot be mistaken for anything.
+  // Boosted, because warmth can never reach 1 in play: the creature is found
+  // at 2.6 m, where the stored value is only about 0.34. Scaled by 1.7 the
+  // glow instead saturates exactly as he arrives, using the whole range.
+  float g = clamp(sqrt(warmth) * 1.7, 0.0, 1.0) * uWarmGain;
+  float rad = 1.0 - sqrt(warmth);
+  // Named ping, not ring: the bloom wavefront below already owns that name.
+  float ping = smoothstep(0.0, 0.7, sin(rad * 26.0 - uTime * 3.4));
+  float glow = g * (0.25 + 0.75 * ping);
+  float sparkle = step(0.955 - g * 0.05, texture2D(uNoise, vLocal * 1.9 + uTime * 0.06).a);
+
+  // Pale, NOT the accent on its own. The accent is the colour paint leaves
+  // behind, so an accent-coloured glow on drained floor reads as "a bit of this
+  // got coloured in" rather than as a signal. Washed toward white, and lifted
+  // in brightness as well as hue, it reads as light coming up through the
+  // floor -- which is a thing paint never does.
+  vec3 glowCol = mix(uColorAccent, vec3(1.0), 0.55);
+  base = mix(base, base * vec3(1.22, 1.10, 0.86), glow * p);
+  base = mix(base, glowCol, glow * (1.0 - p) * 0.75);
+  base *= 1.0 + glow * 0.5;
+  base += uColorAccent * sparkle * glow * 0.75;
 
   // The bloom wavefront: a bright rim where paint is fresh.
   float ring = fresh * (1.0 - abs(p - 0.5) * 2.0);

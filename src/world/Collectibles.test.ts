@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { Group, ShaderMaterial } from 'three';
 import { layoutScene } from './Layout';
 import { Terrain } from './Terrain';
+import { Props } from './Props';
+import { Collectibles, type FoundEvent } from './Collectibles';
+import { AreaTransform } from '../core/AreaTransform';
 import { candy } from '../content/scenes/candy';
+import { starterFriend } from '../content/collectibles/friend';
 
 /**
  * The hiding rules, without needing a WebGL context.
@@ -83,5 +88,170 @@ describe('candy collectibles content', () => {
         );
       }
     }
+  });
+});
+
+/** A real room, meshes and all. No GL context needed to build geometry. */
+function room(seed: number): { props: Props; collectibles: Collectibles } {
+  const terrain = terrainFor(seed);
+  const placed = layoutScene(candy, seed).placed;
+  const props = new Props(candy, placed, terrain, new ShaderMaterial(), new Group(), 0);
+  const collectibles = new Collectibles(
+    candy,
+    seed,
+    terrain,
+    placed,
+    props,
+    new ShaderMaterial(),
+    new Group(),
+    0,
+    candy.stage.width / 2,
+  );
+  return { props, collectibles };
+}
+
+describe('the warmth field', () => {
+  /**
+   * The hot/cold guidance, which for the whole life of the feature was baked
+   * correctly and then multiplied by paint coverage in the ground shader --
+   * making it invisible on every bit of floor he had not already driven over,
+   * which is exactly where hidden things are. These pin the CPU half.
+   */
+  it('glows around every unfound thing', () => {
+    const { props, collectibles } = room(11);
+    const transform = AreaTransform.centered(candy.stage.width, 96);
+    const field = new Uint8Array(96 * 96 * 2);
+    collectibles.bakeWarmth(field, transform);
+
+    for (const h of collectibles.items) {
+      // cellX/cellZ are fractional; the field is indexed by whole cells.
+      const i = (Math.floor(transform.cellZ(h.z)) * 96 + Math.floor(transform.cellX(h.x))) * 2 + 1;
+      expect(field[i], `no glow over ${h.def.id}`).toBeGreaterThan(0);
+    }
+    props.dispose();
+    collectibles.dispose();
+  });
+
+  it('goes out once he has found it, and leaves the rest alone', () => {
+    const { props, collectibles } = room(11);
+    const transform = AreaTransform.centered(candy.stage.width, 96);
+    const field = new Uint8Array(96 * 96 * 2);
+
+    const target = collectibles.items[0]!;
+    const at = (h: { x: number; z: number }) =>
+      field[(Math.floor(transform.cellZ(h.z)) * 96 + Math.floor(transform.cellX(h.x))) * 2 + 1]!;
+
+    target.found = true;
+    collectibles.bakeWarmth(field, transform);
+    // Its own glow is gone -- unless a neighbour's disc happens to reach it,
+    // which is legitimate, so only assert the ones far from everything else.
+    const others = collectibles.items.filter((h) => h !== target && !h.found);
+    const isolated = others.every((h) => Math.hypot(h.x - target.x, h.z - target.z) > 16);
+    if (isolated) expect(at(target)).toBe(0);
+    for (const h of others) expect(at(h), `${h.def.id} lost its glow too`).toBeGreaterThan(0);
+
+    props.dispose();
+    collectibles.dispose();
+  });
+
+  it('warmthAt agrees with what it baked', () => {
+    const { props, collectibles } = room(11);
+    const h = collectibles.items[0]!;
+    expect(collectibles.warmthAt(h.x, h.z)).toBeGreaterThan(0.9);
+    expect(collectibles.warmthAt(h.x + 40, h.z)).toBe(0);
+    props.dispose();
+    collectibles.dispose();
+  });
+});
+
+describe('hiding inside several props', () => {
+  it('claims more than one prop, and never the same one twice', () => {
+    for (const seed of [3, 19, 404]) {
+      const { props, collectibles } = room(seed);
+      const seen = new Set<number>();
+      for (const h of collectibles.items) {
+        if (h.def.hide !== 'disguise') {
+          expect(h.propIds, `${h.def.id} is tucked and should claim nothing`).toHaveLength(0);
+          continue;
+        }
+        expect(h.propIds.length, `${h.def.id} claimed nothing`).toBeGreaterThan(1);
+        for (const id of h.propIds) {
+          expect(seen.has(id), `prop ${id} claimed by two creatures`).toBe(false);
+          seen.add(id);
+        }
+      }
+      props.dispose();
+      collectibles.dispose();
+    }
+  });
+
+  it('hatches out of the one he touched, and hides only that one', () => {
+    const { props, collectibles } = room(3);
+    const h = collectibles.items.find((i) => i.def.hide === 'disguise')!;
+    expect(h.propIds.length).toBeGreaterThan(1);
+
+    const touched = h.propIds[1]!; // deliberately NOT the first claim
+    const hidden: number[] = [];
+    const out: FoundEvent[] = [];
+    // The prop's own position, so the creature appears where he actually is.
+    collectibles.onPropPainted(
+      { id: touched, x: 12.5, y: 1.25, z: -7.5, note: null, color: 0 },
+      out,
+      (id) => hidden.push(id),
+    );
+
+    expect(out).toHaveLength(1);
+    expect(out[0]!.x).toBe(12.5);
+    expect(out[0]!.z).toBe(-7.5);
+    // Its siblings stay ordinary props: the room must not visibly lose scenery.
+    expect(hidden).toEqual([touched]);
+
+    // And it cannot be found a second time out of another of its claims.
+    out.length = 0;
+    collectibles.onPropPainted(
+      { id: h.propIds[0]!, x: 0, y: 0, z: 0, note: null, color: 0 },
+      out,
+      (id) => hidden.push(id),
+    );
+    expect(out).toHaveLength(0);
+    expect(hidden).toEqual([touched]);
+
+    props.dispose();
+    collectibles.dispose();
+  });
+});
+
+describe('the friend he starts with', () => {
+  it('is hidden nowhere, because he already has it', () => {
+    expect(starterFriend.hide).toBe('given');
+    expect(starterFriend.onFind).toBe('follow');
+  });
+
+  it('appears in no scene list, so the world never places a second copy', () => {
+    // A duplicate would not clone a follower -- the roster dedupes by id -- but
+    // finding it would fire fireworks and a sound for a creature already
+    // walking behind him.
+    for (const c of candy.collectibles) expect(c.id).not.toBe(starterFriend.id);
+  });
+
+  it('is skipped even if someone does drop it into a scene', () => {
+    const scene = { ...candy, collectibles: [...candy.collectibles, starterFriend] };
+    const terrain = terrainFor(5);
+    const placed = layoutScene(candy, 5).placed;
+    const props = new Props(candy, placed, terrain, new ShaderMaterial(), new Group(), 0);
+    const collectibles = new Collectibles(
+      scene,
+      5,
+      terrain,
+      placed,
+      props,
+      new ShaderMaterial(),
+      new Group(),
+      0,
+      candy.stage.width / 2,
+    );
+    for (const h of collectibles.items) expect(h.def.id).not.toBe(starterFriend.id);
+    props.dispose();
+    collectibles.dispose();
   });
 });
