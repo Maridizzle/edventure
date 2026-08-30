@@ -51,9 +51,11 @@ export class FollowCamera {
   setAspect(w: number, h: number): void {
     this.camera.aspect = w / h;
     const portrait = h > w;
-    // Far enough back that the painted region reads as an achievement rather
-    // than a patch under his feet, close enough that the world still feels 3D.
-    this.offset.set(0, portrait ? 18 : 15.5, portrait ? 15.5 : 13);
+    // Framed for a diorama, not a field. The walls have to be visible or the
+    // stage stops reading as an enclosed place -- which is the entire point of
+    // building it as one. Pulled back further than a follow-cam would normally
+    // sit, and deliberately so.
+    this.offset.set(0, portrait ? 22 : 19, portrait ? 19 : 16);
     this.camera.updateProjectionMatrix();
   }
 

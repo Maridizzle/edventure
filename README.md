@@ -2,8 +2,13 @@
 
 A 3D painting adventure for a five-year-old who can't read yet.
 
-The world starts drained and gray. You roll around, and everything you touch blooms into
-color. Paint enough of an area and the way to the next one opens.
+Every place is a **diorama**: a bounded stage, walled on three sides and open toward you,
+like a shoebox or a doll's house cutaway. It starts drained and gray. You roll around, and
+everything you touch blooms into colour. Paint enough of it and the door opens.
+
+The open front falls out of the camera's fixed yaw — "toward the viewer" is a constant
+world direction, so there is simply no near wall to build. Nothing can ever come between
+the camera and the player, with no wall fading and no camera collision.
 
 ## The three rules
 
@@ -92,6 +97,26 @@ that turns them into geometry. That rule is what makes "adding content = adding 
 file" true rather than aspirational — there are no models, no rigs, no textures and no
 Blender step anywhere in this project.
 
+### Scenes
+
+A scene is data (`src/content/scenes/`). `world/Layout.ts` solves declarative placement
+rules — `backWall`, `corner`, `ring`, `flankDoor`, `scatter` — into concrete positions from
+a seed. That rule vocabulary is what makes a room read as *composed* rather than sprinkled;
+a 5-year-old reads a place from a few big recognizable objects, not from hundreds of small
+ones. If a scene stops reading as a place, the fix is bigger and fewer fixtures, never more
+scatter.
+
+Two things the layout solver guarantees, both tested: no two footprints overlap, and the
+apron in front of the door stays clear so the way out is never buried. Note that props do
+**not** block movement — they're touch-to-paint and `stepMotion` has no collision against
+them — so a reserved area only affects what things look like, never whether he can get
+somewhere.
+
+Fixtures and scatter both render as `InstancedMesh` per kind (a unique centrepiece is just
+`count = 1`), so draw calls scale with the number of *kinds*, not objects. Paint state is
+per-instance and animated in the vertex shader: painting an object writes four floats and
+does no CPU matrix work.
+
 ### The paint system
 
 `src/paint/PaintMask.ts` is the heart of the game. A CPU-side `Uint8Array` (R = paint
@@ -135,18 +160,20 @@ Notably **not** the mask upload — that's under 1% of the frame.
 | M0 PWA shell, fixed-step loop, context-loss recovery, quality tiers | done |
 | M1 terrain, character, joystick, camera | done |
 | M2 paint mask, ground shader, coverage | done |
-| M3 instanced props | next |
-| M4 procedural audio | |
-| M5 hidden collectibles | |
-| M6 gate + completion → **shippable** | |
+| S1 diorama stage: walls, tray, door, placed candy fixtures, paint-on-touch | done |
+| S2 colour climbs the walls | next |
+| S3 door blooms open → next scene | |
+| S4 the candy dinosaur | |
+| S5 forest clearing (proves the grammar generalizes) | |
+| S6 indoor rooms, tiny worlds, vehicles | |
 
-M6 is the ship point: painting, collecting, a gate, and endless areas is a complete game.
-The gallery, characters and extra biomes come after, with a player who's already invested.
+S3 is the ship point: painting a room, a door that opens, and a new room behind it is a
+complete loop. Collectibles, the gallery and the other kits come after.
 
 ## Tuning dials
 
 These three are meant to be turned after watching him play, not reasoned about:
 
-- `worldSize` in the biome file — how much area there is to cover.
+- `stage.width` in the scene file — how much room there is to cover.
 - `trail.radiusM` in the character file — how fast painting goes.
 - `GATE_THRESHOLD` — how much counts as done (0.70, and it must never be 1.0).

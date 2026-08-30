@@ -11,8 +11,14 @@ export interface TerrainParams {
   warpAmp: number;
   /** No cliffs, ever. Clamped post-pass. This is a no-fail-state guarantee. */
   maxSlopeDeg: number;
-  edgeFalloffStart: number;
-  edgeFalloffPower: number;
+  /**
+   * The rim bowl that makes an open island read as an object.
+   *
+   * `null` for a diorama floor: a room's floor must NOT fall away at the edges
+   * — the walls do the bounding, and a sloping skirt would look like a bug and
+   * roll the player away from the very corners he needs to paint.
+   */
+  edgeFalloff: { start: number; power: number } | null;
 }
 
 /**
@@ -52,12 +58,16 @@ export class Terrain {
         const wx = -half + x * this.step;
         let h = warped(base, warp, wx, wz, p.octaves, p.warpFreq, p.warpAmp);
 
-        // Soft bowl at the rim so the area reads as an object, not a slice of
-        // an infinite plane — and so the boundary push-back feels natural.
-        const d = Math.max(Math.abs(wx), Math.abs(wz)) / half;
-        if (d > p.edgeFalloffStart) {
-          const t = (d - p.edgeFalloffStart) / (1 - p.edgeFalloffStart);
-          h -= Math.pow(clamp(t, 0, 1), p.edgeFalloffPower) * (Math.abs(h) + 6);
+        // Soft bowl at the rim so an open area reads as an object rather than
+        // a slice of infinite plane. Skipped entirely for a diorama floor,
+        // where the walls do the bounding and a sloping skirt would both look
+        // like a bug and roll him away from the corners he needs to paint.
+        if (p.edgeFalloff) {
+          const d = Math.max(Math.abs(wx), Math.abs(wz)) / half;
+          if (d > p.edgeFalloff.start) {
+            const t = (d - p.edgeFalloff.start) / (1 - p.edgeFalloff.start);
+            h -= Math.pow(clamp(t, 0, 1), p.edgeFalloff.power) * (Math.abs(h) + 6);
+          }
         }
         this.heights[z * n + x] = h;
       }

@@ -1,6 +1,7 @@
 import {
   Color,
   Fog,
+  Group,
   Mesh,
   Scene,
   SRGBColorSpace,
@@ -17,30 +18,51 @@ import { PaintMask } from '../paint/PaintMask';
 import { createFieldTexture, createNoiseTexture, createPaintTexture } from '../paint/PaintTextures';
 import { createGroundMaterial } from '../paint/GroundMaterial';
 import { Terrain } from '../world/Terrain';
+import { layoutScene, type LayoutResult } from '../world/Layout';
+import { buildStage, type StageBuild } from '../world/Stage';
+import { Props, TOUCH_SCRATCH } from '../world/Props';
+import { Door } from '../world/Door';
 import { Character } from '../player/Character';
 import { FollowCamera } from '../player/FollowCamera';
 import { FLAVORS, makeMoveState, stepMotion, type MoveState } from '../player/Motion';
 import { createToyMaterial } from '../shape/ToyMaterial';
+import { createInstancedToyMaterial } from '../shape/InstancedToyMaterial';
 import { blob } from '../content/characters/blob';
-import { meadow } from '../content/biomes/meadow';
-import type { BiomeDef } from '../content/types';
+import { candy } from '../content/scenes/candy';
+import type { SceneDef } from '../content/types';
 
 const NOISE_SIZE = 128;
+
+/** Touching a prop splashes this much ground around it. */
+const PROP_SPLASH_M = 5.0;
+
+/**
+ * Coverage weighting. Props are worth a lot because bumping things is the fun
+ * part, and the fun part should also be the fast route to a finished room.
+ */
+const GROUND_WEIGHT = 0.6;
+const PROP_WEIGHT = 0.4;
 
 export class PlayScene {
   readonly scene = new Scene();
   readonly follow: FollowCamera;
 
-  readonly biome: BiomeDef;
+  readonly def: SceneDef;
   readonly terrain: Terrain;
   readonly transform: AreaTransform;
   readonly mask: PaintMask;
+  readonly props: Props;
 
   private groundMat: ShaderMaterial;
   private toyMat: ShaderMaterial;
+  private instMat: ShaderMaterial;
   private paintTex;
   private fieldTex;
   private noiseTex;
+
+  private stage: StageBuild;
+  private door: Door;
+  private worldGroup = new Group();
 
   private player: Character;
   private move: MoveState;
@@ -50,30 +72,31 @@ export class PlayScene {
   private time = 0;
   private frameIndex = 0;
   private settings: TierSettings;
+  private layout: LayoutResult;
 
-  constructor(seed: number, settings: TierSettings, aspect: number, biome: BiomeDef = meadow) {
-    this.biome = biome;
+  constructor(seed: number, settings: TierSettings, aspect: number, def: SceneDef = candy) {
+    this.def = def;
     this.settings = settings;
 
-    const t = biome.terrain;
+    const size = def.stage.width;
+    const t = def.stage.terrain;
+
     this.terrain = new Terrain(
       {
-        worldSize: t.worldSize,
+        worldSize: size,
         grid: settings.terrainGrid,
-        octaves: t.octaves,
-        warpFreq: t.warp.freq,
-        warpAmp: t.warp.amp,
-        maxSlopeDeg: t.maxSlopeDeg,
-        edgeFalloffStart: t.edgeFalloff.start,
-        edgeFalloffPower: t.edgeFalloff.power,
+        octaves: def.stage.floor === 'flat' ? [] : (t?.octaves ?? []),
+        warpFreq: t?.warp.freq ?? 0.01,
+        warpAmp: t?.warp.amp ?? 0,
+        maxSlopeDeg: t?.maxSlopeDeg ?? 26,
+        // A room's floor must not fall away at the rim; the walls bound it.
+        edgeFalloff: def.stage.floor === 'flat' ? null : { start: 0.8, power: 2 },
       },
       seed,
     );
 
-    this.transform = AreaTransform.centered(t.worldSize, settings.maskCells);
+    this.transform = AreaTransform.centered(size, settings.maskCells);
     this.mask = new PaintMask(settings.maskCells);
-    // M2: everything is paintable. The reachability flood-fill lands with the
-    // area generator in M7 and will replace this.
     this.mask.setAllPaintable();
 
     // --- textures ---
@@ -87,48 +110,89 @@ export class PlayScene {
     );
 
     // --- sky + fog ---
-    this.scene.background = new Color().setHex(biome.sky.horizon, SRGBColorSpace);
+    this.scene.background = new Color().setHex(def.sky.horizon, SRGBColorSpace);
+    const fogFar = Math.min(def.sky.fogFar, settings.fogFar);
     this.scene.fog = new Fog(
-      new Color().setHex(biome.sky.fogColor, SRGBColorSpace).getHex(),
-      biome.sky.fogNear,
-      Math.min(biome.sky.fogFar, settings.fogFar),
+      new Color().setHex(def.sky.fogColor, SRGBColorSpace).getHex(),
+      def.sky.fogNear,
+      fogFar,
     );
 
-    const lightDir = new Vector3(...biome.light.dir).normalize();
+    const lightDir = new Vector3(...def.light.dir).normalize();
+    const fogArgs = {
+      fogColor: def.sky.fogColor,
+      fogNear: def.sky.fogNear,
+      fogFar,
+    };
 
-    // --- ground ---
+    this.scene.add(this.worldGroup);
+
+    // --- floor ---
     this.groundMat = createGroundMaterial({
-      palette: biome.palette,
+      palette: {
+        groundA: def.palette.floorA,
+        groundB: def.palette.floorB,
+        accent: def.palette.accent,
+        grayTint: def.palette.grayTint,
+      },
       transform: this.transform,
       paintTex: this.paintTex,
       fieldTex: this.fieldTex,
       noiseTex: this.noiseTex,
       heightMin: this.terrain.minHeight,
-      heightRange: this.terrain.maxHeight - this.terrain.minHeight,
+      heightRange: Math.max(0.001, this.terrain.maxHeight - this.terrain.minHeight),
       lightDir,
-      fogColor: biome.sky.fogColor,
-      fogNear: biome.sky.fogNear,
-      fogFar: Math.min(biome.sky.fogFar, settings.fogFar),
+      ...fogArgs,
     });
     const ground = new Mesh(this.terrain.buildGeometry(), this.groundMat);
     ground.frustumCulled = false;
-    this.scene.add(ground);
+    this.worldGroup.add(ground);
 
-    // --- player ---
+    // --- shared materials ---
     this.toyMat = createToyMaterial({
       lightDir,
-      grayTint: biome.palette.grayTint,
-      fogColor: biome.sky.fogColor,
-      fogNear: biome.sky.fogNear,
-      fogFar: Math.min(biome.sky.fogFar, settings.fogFar),
+      grayTint: def.palette.grayTint,
       painted: true,
+      ...fogArgs,
     });
+    this.instMat = createInstancedToyMaterial({
+      lightDir,
+      grayTint: def.palette.grayTint,
+      ...fogArgs,
+    });
+
+    // --- the diorama shell ---
+    // Walls use the pre-painted ToyMaterial for now; S2 gives them a shader
+    // that samples the floor mask so colour climbs them as he paints.
+    this.stage = buildStage(def, this.toyMat);
+    this.worldGroup.add(this.stage.group);
+
+    // --- layout, props, door ---
+    this.layout = layoutScene(def, seed);
+    this.props = new Props(
+      def,
+      this.layout.placed,
+      this.terrain,
+      this.instMat,
+      this.worldGroup,
+      settings.shapeDetail,
+    );
+    this.door = new Door(
+      def,
+      this.toyMat,
+      this.layout.door,
+      this.terrain.heightAt(this.layout.door.x, this.layout.door.z),
+      settings.shapeDetail,
+    );
+    this.worldGroup.add(this.door.group);
+
+    // --- player ---
     this.player = new Character(blob, this.toyMat, settings.shapeDetail);
-    this.scene.add(this.player.group);
+    this.worldGroup.add(this.player.group);
 
     this.move = makeMoveState(blob.radius);
-    this.move.pos.set(0, 0, 0);
-    this.move.pos.y = this.terrain.heightAt(0, 0) + blob.radius;
+    this.move.pos.set(this.layout.spawn.x, 0, this.layout.spawn.z);
+    this.move.pos.y = this.terrain.heightAt(this.move.pos.x, this.move.pos.z) + blob.radius;
     this.prevCellX = this.transform.cellX(this.move.pos.x);
     this.prevCellZ = this.transform.cellZ(this.move.pos.z);
 
@@ -136,20 +200,17 @@ export class PlayScene {
     this.follow.reset(this.move.pos);
   }
 
+  /** 0..1. Ground and props combined; this is what opens the door. */
+  get progress(): number {
+    return GROUND_WEIGHT * this.mask.coverage + PROP_WEIGHT * this.props.coverage;
+  }
+
   get coverage(): number {
     return this.mask.coverage;
   }
 
-  /** Fixed 60 Hz. */
   fixedUpdate(input: Vector2, dt: number): void {
-    stepMotion(
-      this.move,
-      blob.movement,
-      input,
-      this.terrain,
-      this.biome.terrain.worldSize,
-      dt,
-    );
+    stepMotion(this.move, blob.movement, input, this.terrain, this.def.stage.width, dt);
 
     const flavor = FLAVORS[blob.movement.flavor];
     const cx = this.transform.cellX(this.move.pos.x);
@@ -164,40 +225,41 @@ export class PlayScene {
     this.prevCellX = cx;
     this.prevCellZ = cz;
 
+    // Bumping things is the fun part, so it is also the fast way to fill a
+    // room: every prop touched splashes a wide burst of floor paint.
+    this.props.setTime(this.time);
+    this.props.collectTouched(this.move.pos.x, this.move.pos.z, blob.radius, TOUCH_SCRATCH);
+    for (let i = 0; i < TOUCH_SCRATCH.length; i++) {
+      const p = TOUCH_SCRATCH[i]!;
+      this.mask.stamp(
+        this.transform.cellX(p.x),
+        this.transform.cellZ(p.z),
+        this.transform.radiusCells(PROP_SPLASH_M),
+      );
+    }
+
     this.player.update(this.move, dt);
   }
 
-  /** Once per rendered frame — never from the sim step. */
   render(renderer: WebGLRenderer, dt: number): void {
     this.time += dt;
     this.frameIndex++;
 
     this.mask.decayPulse();
 
-    // The upload. Full re-upload when dirty, at most once per frame, throttled
-    // by tier. At interval 3 the trail lags 50ms behind the ball, which is
-    // invisible because the bloom is animated in the shader anyway.
     if (this.mask.dirty && this.frameIndex % this.settings.maskUploadInterval === 0) {
       this.paintTex.needsUpdate = true;
       this.mask.dirty = false;
     }
 
     this.groundMat.uniforms.uTime!.value = this.time;
+    this.instMat.uniforms.uTime!.value = this.time;
 
-    this.follow.update(
-      dt,
-      this.move.pos,
-      this.move.vel,
-      this.move.speedNorm,
-      blob.face.lookAhead,
-    );
-
+    this.follow.update(dt, this.move.pos, this.move.vel, this.move.speedNorm, blob.face.lookAhead);
     renderer.render(this.scene, this.follow.camera);
   }
 
   applySettings(s: TierSettings): void {
-    // Only live-adjustable knobs. Mask resolution and terrain grid need a
-    // rebuild, so the governor must never touch them mid-play.
     this.settings.maskUploadInterval = s.maskUploadInterval;
     this.settings.particles = s.particles;
   }
@@ -206,13 +268,21 @@ export class PlayScene {
     this.follow.setAspect(w, h);
   }
 
+  /**
+   * Scene switching is a new leak surface. Ten transitions crashes a 4 GB
+   * phone if anything here is missed — watch renderer.info.memory.
+   */
   dispose(): void {
-    this.scene.traverse((o) => {
+    this.props.dispose();
+    this.stage.dispose();
+    this.door.dispose();
+    this.player.dispose();
+    this.worldGroup.traverse((o) => {
       if (o instanceof Mesh) o.geometry.dispose();
     });
-    this.player.dispose();
     this.groundMat.dispose();
     this.toyMat.dispose();
+    this.instMat.dispose();
     this.paintTex.dispose();
     this.fieldTex.dispose();
     this.noiseTex.dispose();

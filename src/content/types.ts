@@ -48,51 +48,97 @@ export interface Octave {
   amp: number;
 }
 
-export interface PropKind {
+/* ------------------------------------------------------------------ *
+ * Scenes
+ * ------------------------------------------------------------------ */
+
+/**
+ * Where an object goes on the stage.
+ *
+ * This vocabulary is the difference between a composed room and a field with
+ * things sprinkled on it. A 5-year-old reads a place from a few big objects in
+ * deliberate positions — a bed against a wall, a rug in the middle — not from
+ * hundreds of scattered ones.
+ */
+export type Placement =
+  /** `along` is 0..1 across that wall, left to right as the camera sees it. */
+  | { at: 'backWall'; along: number; count?: number }
+  | { at: 'leftWall'; along: number; count?: number }
+  | { at: 'rightWall'; along: number; count?: number }
+  | { at: 'corner'; which: 'backLeft' | 'backRight' }
+  | { at: 'center'; jitter?: number }
+  | { at: 'ring'; radius: number; count: number; jitter?: number }
+  | { at: 'scatter'; region: 'open' | 'edge'; count: [number, number] }
+  | { at: 'flankDoor'; offset: number };
+
+export interface Fixture {
   kind: string;
   shape: ShapeRecipe;
-  density: number;
+  palette: number[];
+  /** Uniform scale range; the layout solver picks per instance from the seed. */
   scale: [number, number];
-  slopeMax: number;
-  heightBand: [number, number];
-  /** Scale degrees this prop may sound. null = silent (grass). */
+  /** Reserved radius in metres. Nothing else may overlap it. */
+  footprint: number;
+  place: Placement;
+  /** Scale degrees this object may sound when painted. null = silent. */
   note: number[] | null;
-  /** Only `large` props can hide a collectible. */
-  large: boolean;
 }
 
-export interface BiomeDef {
-  id: string;
-  order: number;
-
-  sky: { top: number; horizon: number; fogColor: number; fogNear: number; fogFar: number };
-  light: { dir: [number, number, number] };
-
-  palette: {
-    groundA: number;
-    groundB: number;
-    accent: number;
-    grayTint: number;
-  };
-
-  terrain: {
-    worldSize: number;
+export interface StageDef {
+  width: number;
+  depth: number;
+  floor: 'flat' | 'terrain';
+  /** `solid` = real walls. `ring` = enclosed by scenery instead. */
+  walls: 'solid' | 'ring' | 'none';
+  wallHeight: number;
+  /** Only used when floor is 'terrain'. */
+  terrain?: {
     octaves: Octave[];
     warp: { freq: number; amp: number };
     maxSlopeDeg: number;
-    edgeFalloff: { start: number; power: number };
   };
-
-  props: PropKind[];
-
-  audio: {
-    scale: string;
-    rootHz: number;
-  };
-
-  collectiblesPerArea: [number, number];
-  nextBiomes: string[];
 }
+
+export interface ScenePalette {
+  floorA: number;
+  floorB: number;
+  accent: number;
+  grayTint: number;
+  wall: number;
+  trim: number;
+}
+
+export interface DoorDef {
+  shape: ShapeRecipe;
+  palette: number[];
+  wall: 'back' | 'left' | 'right';
+  /** 0..1 along that wall. */
+  along: number;
+  scale: number;
+}
+
+export interface SceneDef {
+  id: string;
+  kit: 'candy' | 'indoor' | 'nature' | 'tiny';
+
+  stage: StageDef;
+  palette: ScenePalette;
+  sky: { horizon: number; fogColor: number; fogNear: number; fogFar: number };
+  light: { dir: [number, number, number] };
+
+  /** Few, big, recognizable, individually placed. These make it read as a place. */
+  fixtures: Fixture[];
+  /** Many, small, instanced filler. These make it read as full. */
+  scatter: Fixture[];
+
+  door: DoorDef;
+  audio: { scale: string; rootHz: number };
+  nextScenes: string[];
+}
+
+/* ------------------------------------------------------------------ *
+ * Characters and collectibles
+ * ------------------------------------------------------------------ */
 
 export interface CollectibleDef {
   id: string;
@@ -120,7 +166,12 @@ export interface CharacterDef {
     hopPerMetre?: number;
   };
   trail: { radiusM: number; softness: number };
-  timbre: { wave: 'sine' | 'triangle' | 'square' | 'sawtooth'; attack: number; decay: number; octave: number };
+  timbre: {
+    wave: 'sine' | 'triangle' | 'square' | 'sawtooth';
+    attack: number;
+    decay: number;
+    octave: number;
+  };
   face: { lookAhead: number };
   wobble: { stiffness: number; damping: number; kick: number };
 }
