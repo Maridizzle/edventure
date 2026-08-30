@@ -1,0 +1,66 @@
+name: Deploy
+
+# Every push to the default branch rebuilds and republishes, so he always has
+# the newest version without anyone touching a laptop. The typecheck and test
+# gates below are what make that safe: a broken build must never reach a
+# 5-year-old's phone, because he cannot refresh, force-quit, or tell you what
+# went wrong.
+
+on:
+  push:
+    branches: [claude/mobile-3d-kids-game-uu3qsb]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; the newest push wins.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+        env:
+          # Playwright is a devDependency for the local smoke test only. Without
+          # this its postinstall drags ~150 MB of browsers into every CI run.
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+        env:
+          # Pages serves a project site under /<repo>/, not the domain root.
+          BASE_PATH: /edventure/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

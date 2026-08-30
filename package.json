@@ -9,7 +9,11 @@
     "preview": "vite preview --host",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "icons": "node scripts/make-icons.mjs",
+    "build:standalone": "node scripts/build-standalone.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "offline": "node scripts/offline-check.mjs"
   },
   "dependencies": {
     "idb-keyval": "^6.3.0",
@@ -17,6 +21,7 @@
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@types/node": "^26.4.0",
     "@types/three": "^0.185.4",
     "playwright": "^1.62.1",
     "typescript": "^7.0.2",

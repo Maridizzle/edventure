@@ -17,16 +17,27 @@ change.
    is always the same direction in the world.
 3. **No way to lose.** No death, no timers, no enemies, no dead ends, no lost progress.
 
-## Running it
+## Play it
+
+**https://maridizzle.github.io/edventure/**
+
+On the phone, open that in **Chrome** → menu → **Add to Home Screen**, then launch it from
+the icon rather than the browser tab. Standalone is the real delivery mode: no URL bar, it
+works with the wifi off, and it behaves differently enough that it's the only way worth
+testing (the Android back gesture exits the app from the root, for one).
+
+Install from Chrome specifically — Samsung Internet 27+ no longer fires
+`beforeinstallprompt` and gives you a plain shortcut instead of a true standalone app.
+
+Every push to the default branch redeploys automatically, gated on typecheck and tests, so
+a broken build can't reach his phone.
+
+## Developing
 
 ```bash
 npm install
-npm run dev          # then open the Network URL on the phone
+npm run dev          # LAN-accessible; open the Network URL on a phone
 ```
-
-`npm run dev` binds to the LAN, so the address it prints under **Network** works from a
-phone on the same wifi. That's the intended way to test — see *Testing on the real device*
-below.
 
 | Command | |
 |---|---|
@@ -35,24 +46,31 @@ below.
 | `npm run preview` | serve the built bundle (needed for service-worker testing) |
 | `npm test` | unit tests |
 | `npm run typecheck` | `tsc --noEmit` |
-| `node scripts/make-icons.mjs` | regenerate the PWA icons |
-| `node scripts/smoke.mjs <url>` | headless render + paint check, writes `scratch/shots/` |
+| `npm run icons` | regenerate the PWA icons |
+| `npm run build:standalone` | one self-contained HTML file — the tap-to-play link |
+| `npm run smoke <url\|file>` | headless render + paint check, writes `scratch/shots/` |
+| `npm run offline <url>` | proves the service worker serves the app with the network cut |
 
 Append `?debug=1` to any URL for the stats overlay and a live blit of the paint mask.
+
+`BASE_PATH` controls where the app expects to be served from; CI sets `/edventure/` for the
+Pages project site. Getting this wrong doesn't break the first load — it breaks the
+*second* one, once the service worker is serving, as a white screen. `npm run offline` is
+the check that catches it:
+
+```bash
+BASE_PATH=/edventure/ npm run build
+BASE_PATH=/edventure/ npm run preview -- --port 4174
+npm run offline http://127.0.0.1:4174/edventure
+```
 
 ## Testing on the real device
 
 The performance floor is a **mid-range Android**, and it is the only measurement that
-counts. Everything runs at 300 fps on a laptop.
+counts. Everything runs at 300 fps on a laptop, and the headless smoke test runs on
+software rendering — neither tells you anything about frame time.
 
-1. `npm run dev`, open the Network URL on the phone.
-2. Chrome → menu → **Add to Home Screen**. Launch it from the icon, not the browser tab —
-   standalone mode is the real delivery mode and behaves differently (no URL bar, the back
-   gesture exits the app).
-3. Plug the phone in and open `chrome://inspect` on the desktop to profile it live.
-
-Install via Chrome specifically: Samsung Internet 27+ no longer fires
-`beforeinstallprompt` and creates a plain shortcut rather than a true standalone app.
+Plug the phone in and open `chrome://inspect` on a desktop to profile the real thing.
 
 ## Architecture
 

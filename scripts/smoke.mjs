@@ -9,8 +9,13 @@
  */
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-const BASE = process.argv[2] ?? 'http://localhost:4173';
+const TARGET = process.argv[2] ?? 'http://localhost:4173';
+// Accept either a served URL or a path to the standalone single-file build.
+const URL_ = TARGET.endsWith('.html')
+  ? `file://${resolve(TARGET)}?debug=1`
+  : `${TARGET}/?debug=1`;
 const OUT = 'scratch/shots';
 mkdirSync(OUT, { recursive: true });
 
@@ -34,7 +39,7 @@ page.on('console', (m) => {
 });
 page.on('pageerror', (e) => errors.push(String(e)));
 
-await page.goto(`${BASE}/?debug=1`, { waitUntil: 'networkidle' });
+await page.goto(URL_, { waitUntil: 'networkidle' });
 await page.waitForTimeout(1500);
 await page.screenshot({ path: `${OUT}/01-start.png` });
 
