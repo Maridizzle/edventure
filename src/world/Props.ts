@@ -305,10 +305,16 @@ export class Props {
       const k = this.kinds[this.kindOf[id]!]!;
       k.paintTime.array[this.slotOf[id]!] = this.time + Math.sqrt(dx * dx + dz * dz) / waveSpeed;
     }
-    // One whole-attribute upload per kind rather than a range per prop: the
-    // wave touches most of the room, so tight ranges would be pure bookkeeping.
+    // A whole-attribute range per kind rather than one per prop: the wave
+    // touches most of the room, so tight ranges would be pure bookkeeping.
+    //
+    // A range and not `clearUpdateRanges()`, which would also have uploaded
+    // everything -- but only until something else touched the attribute. A prop
+    // painted in a later substep of the SAME frame adds its own one-slot range,
+    // and three would then upload that slot alone and drop the entire wave on
+    // the floor. Ranges merge; an empty list does not.
     for (const k of this.kinds) {
-      k.paintTime.clearUpdateRanges();
+      k.paintTime.addUpdateRange(0, k.paintTime.array.length);
       k.paintTime.needsUpdate = true;
     }
   }

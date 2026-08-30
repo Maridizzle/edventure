@@ -102,6 +102,25 @@ describe('Props.cheer', () => {
     expect(Math.max(...delays)).toBeLessThan(2.5);
   });
 
+  it('still uploads the whole wave when a prop is painted in the same frame', () => {
+    // The trap: three uploads only the ranges an attribute carries, so a prop
+    // painted in a later substep of the same frame would add its own one-slot
+    // range and the rest of the wave would never reach the GPU. Ranges merge;
+    // an empty list does not, which is why `cheer` adds one rather than
+    // clearing them.
+    const { props } = build();
+    paintEverything(props);
+    props.setTime(40);
+    props.cheer(0, 0);
+
+    for (const k of props.kinds) {
+      const ranges = k.paintTime.updateRanges;
+      expect(ranges.length).toBeGreaterThan(0);
+      const covers = ranges.some((r) => r.start === 0 && r.count >= k.paintTime.array.length);
+      expect(covers, 'the cheer must schedule a whole-attribute upload').toBe(true);
+    }
+  });
+
   it('is safe to fire twice', () => {
     const { props } = build();
     paintEverything(props);

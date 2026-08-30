@@ -317,7 +317,8 @@ export class Collectibles {
       const d = Math.hypot(h.x - x, h.z - z);
       const k = this.kinds[h.kindIndex]!;
       k.paintTime.array[h.slot] = this.time + d / waveSpeed;
-      k.paintTime.clearUpdateRanges();
+      // A full range, not a cleared list: see the note in `Props.cheer`.
+      k.paintTime.addUpdateRange(0, k.paintTime.array.length);
       k.paintTime.needsUpdate = true;
     }
   }
