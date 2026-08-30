@@ -40,6 +40,8 @@ interface Corridor {
 }
 
 const MARGIN = 2.2; // keep objects off the walls
+/** Nothing may be placed within this of the spawn point. */
+const SPAWN_CLEAR = 3.6;
 const CORRIDOR_HALF_WIDTH = 3.2;
 /** How far in front of the door to keep clear. */
 const DOOR_CLEAR = 7;
@@ -57,13 +59,14 @@ export function layoutScene(scene: SceneDef, seed: number): LayoutResult {
 
   // 1. Reserve the door's frontage FIRST, before anything competes for space.
   //
-  // Deliberately only a short apron in front of the door, not a lane running
-  // the length of the stage. Props do not block movement at all — they are
-  // touch-to-paint, and `stepMotion` has no collision against them — so the
-  // player can roll straight through anything. All this reservation has to do
-  // is stop the way out being visually buried. A full-length corridor would
-  // forbid the centre of the room, which silently drops the centrepiece, and
-  // the centrepiece is most of what makes a room read as composed.
+  // Deliberately only a short apron, not a lane running the length of the
+  // stage: a full-length corridor forbids the centre of the room, which
+  // silently drops the centrepiece, and the centrepiece is most of what makes
+  // a room read as composed.
+  //
+  // Big fixtures are solid now, so this matters more than it used to — the
+  // apron is what keeps the way out both visible and walkable. Reachability
+  // is the backstop for everything else.
   const corridor = doorApron(door, halfX);
 
   const placed: Placed[] = [];
@@ -89,7 +92,18 @@ export function layoutScene(scene: SceneDef, seed: number): LayoutResult {
   for (const phase of order) {
     for (const entry of all) {
       if (entry.f.place.at !== phase) continue;
-      placeFixture(entry.f, entry.i, entry.scatter, rng, halfX, halfZ, door, corridor, placed);
+      placeFixture(
+        entry.f,
+        entry.i,
+        entry.scatter,
+        rng,
+        halfX,
+        halfZ,
+        door,
+        corridor,
+        spawn,
+        placed,
+      );
     }
   }
 
@@ -142,6 +156,7 @@ function placeFixture(
   halfZ: number,
   door: { x: number; z: number },
   corridor: Corridor,
+  spawn: { x: number; z: number },
   placed: Placed[],
 ): void {
   const p = f.place;
@@ -149,7 +164,7 @@ function placeFixture(
   const add = (x: number, z: number, yaw: number): boolean => {
     const scale = randRange(rng, f.scale[0], f.scale[1]);
     const footprint = f.footprint * scale;
-    if (!fits(x, z, footprint, halfX, halfZ, corridor, placed)) return false;
+    if (!fits(x, z, footprint, halfX, halfZ, corridor, spawn, placed)) return false;
     placed.push({ kind: f.kind, x, z, yaw, scale, footprint, defIndex, isScatter });
     return true;
   };
@@ -246,6 +261,7 @@ function fits(
   halfX: number,
   halfZ: number,
   corridor: Corridor,
+  spawn: { x: number; z: number },
   placed: Placed[],
 ): boolean {
   if (x - r < -halfX + 0.5 || x + r > halfX - 0.5) return false;
@@ -260,6 +276,13 @@ function fits(
   ) {
     return false;
   }
+
+  // He must always arrive standing in open floor, never embedded in a gumdrop
+  // and shoved out by the collision pass.
+  const sx = x - spawn.x;
+  const sz = z - spawn.z;
+  const sMin = r + SPAWN_CLEAR;
+  if (sx * sx + sz * sz < sMin * sMin) return false;
 
   for (let i = 0; i < placed.length; i++) {
     const o = placed[i]!;

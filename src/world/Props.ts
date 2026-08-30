@@ -34,7 +34,9 @@ interface Kind {
 export interface PropTouch {
   x: number;
   z: number;
+  y: number;
   note: number[] | null;
+  color: number;
 }
 
 export class Props {
@@ -50,6 +52,12 @@ export class Props {
   private kindOf: Uint16Array;
   private slotOf: Uint16Array;
   private noteOf: (number[] | null)[] = [];
+  private colorOf: Int32Array;
+  private py: Float32Array;
+  /** Collision radius. 0 means he rolls straight through. */
+  private solid: Float32Array;
+  /** Ids of painted props, so twinkles can pick one without scanning. */
+  private paintedIds: number[] = [];
 
   /** Uniform grid: cell key -> prop ids. Never raycast against 150 objects. */
   private hash = new Map<number, number[]>();
@@ -70,6 +78,9 @@ export class Props {
     this.painted = new Uint8Array(this.total);
     this.kindOf = new Uint16Array(this.total);
     this.slotOf = new Uint16Array(this.total);
+    this.colorOf = new Int32Array(this.total);
+    this.py = new Float32Array(this.total);
+    this.solid = new Float32Array(this.total);
     this.hashCols = Math.ceil(Math.max(scene.stage.width, scene.stage.depth) / CELL) + 4;
 
     // Group placements by (isScatter, defIndex) so each kind gets one mesh.
@@ -110,7 +121,8 @@ export class Props {
 
       for (let s = 0; s < items.length; s++) {
         const it = items[s]!;
-        dummy.position.set(it.x, terrain.heightAt(it.x, it.z), it.z);
+        const y = terrain.heightAt(it.x, it.z);
+        dummy.position.set(it.x, y, it.z);
         dummy.rotation.set(0, it.yaw, 0);
         dummy.scale.setScalar(it.scale);
         dummy.updateMatrix();
@@ -119,6 +131,11 @@ export class Props {
 
         this.px[id] = it.x;
         this.pz[id] = it.z;
+        this.py[id] = y;
+        this.colorOf[id] = def.palette[0] ?? 0xffffff;
+        // Big things block; small things do not. Without that distinction
+        // "go around it" means nothing and hills are just scenery.
+        this.solid[id] = (def.solid ?? 0) * it.scale;
         // Touch radius is generous: a 5-year-old aiming at a lollipop should
         // hit it. Being too forgiving is invisible; being too strict is not.
         this.pr[id] = it.footprint * 0.85 + 0.6;
@@ -166,7 +183,14 @@ export class Props {
           if (ddx * ddx + ddz * ddz > r * r) continue;
           this.painted[id] = 1;
           this.paintedCount++;
-          out.push({ x: this.px[id]!, z: this.pz[id]!, note: this.noteOf[id]! });
+          this.paintedIds.push(id);
+          out.push({
+            x: this.px[id]!,
+            z: this.pz[id]!,
+            y: this.py[id]!,
+            note: this.noteOf[id]!,
+            color: this.colorOf[id]!,
+          });
           this.markPainted(id);
         }
       }
@@ -193,6 +217,58 @@ export class Props {
   private time = 0;
   setTime(t: number): void {
     this.time = t;
+  }
+
+  /**
+   * Push a circle out of every nearby solid prop.
+   *
+   * Queries the same 9 spatial-hash cells as touch detection. Obstacles are
+   * convex and never overlap each other, so a single pass cannot wedge him.
+   */
+  resolveSolids(pos: { x: number; z: number }, vel: { x: number; z: number }, radius: number): void {
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const bucket = this.hash.get(this.cellKey(pos.x + dx * CELL, pos.z + dz * CELL));
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          const id = bucket[i]!;
+          const sr = this.solid[id]!;
+          if (sr <= 0) continue;
+          const ox = pos.x - this.px[id]!;
+          const oz = pos.z - this.pz[id]!;
+          const min = sr + radius;
+          const d2 = ox * ox + oz * oz;
+          if (d2 >= min * min) continue;
+
+          const d = Math.sqrt(d2);
+          // Dead centre: shove in an arbitrary but deterministic direction.
+          const nx = d > 1e-4 ? ox / d : 1;
+          const nz = d > 1e-4 ? oz / d : 0;
+          pos.x = this.px[id]! + nx * min;
+          pos.z = this.pz[id]! + nz * min;
+
+          // Cancel only the velocity going INTO the obstacle, so he slides
+          // around it rather than stopping dead against it.
+          const into = vel.x * nx + vel.z * nz;
+          if (into < 0) {
+            vel.x -= into * nx;
+            vel.z -= into * nz;
+          }
+        }
+      }
+    }
+  }
+
+  /** A painted prop to sparkle, or null. Keeps a finished room feeling alive. */
+  randomPainted(): { x: number; y: number; z: number; color: number } | null {
+    if (this.paintedIds.length === 0) return null;
+    const id = this.paintedIds[(Math.random() * this.paintedIds.length) | 0]!;
+    return { x: this.px[id]!, y: this.py[id]! + 0.6, z: this.pz[id]!, color: this.colorOf[id]! };
+  }
+
+  solidRadiusOf(defIndex: number, isScatter: boolean, scene: SceneDef, scale: number): number {
+    const def = isScatter ? scene.scatter[defIndex]! : scene.fixtures[defIndex]!;
+    return (def.solid ?? 0) * scale;
   }
 
   get coverage(): number {

@@ -106,16 +106,44 @@ a 5-year-old reads a place from a few big recognizable objects, not from hundred
 ones. If a scene stops reading as a place, the fix is bigger and fewer fixtures, never more
 scatter.
 
-Two things the layout solver guarantees, both tested: no two footprints overlap, and the
-apron in front of the door stays clear so the way out is never buried. Note that props do
-**not** block movement — they're touch-to-paint and `stepMotion` has no collision against
-them — so a reserved area only affects what things look like, never whether he can get
-somewhere.
+Three things the layout solver guarantees, all tested: no two footprints overlap, the apron
+in front of the door stays clear, and the spawn point is always open floor so he never
+arrives embedded in a gumdrop. Since big fixtures became solid these are load-bearing for
+movement, not just for looks — see **Solid objects** below.
 
 Fixtures and scatter both render as `InstancedMesh` per kind (a unique centrepiece is just
 `count = 1`), so draw calls scale with the number of *kinds*, not objects. Paint state is
 per-instance and animated in the vertex shader: painting an object writes four floats and
 does no CPU matrix work.
+
+### Fog and light
+
+The world is hazy beyond a small circle around the **child** — not the camera, so three.js's
+built-in fog is gone entirely and `paint/fog.glsl.ts` supplies a shared radial chunk to every
+material instead.
+
+**Painting clears fog permanently.** Props and walls sample the paint mask at their own world
+position, so anything standing on painted floor stays lit. Coverage therefore stops being an
+abstract number and becomes "I lit up this world". The fog is the sky's colour, never dark —
+a small child alone in a dark fog bank is frightening rather than mysterious. The player
+never fades at all, and the door is capped at 70% fog so it always glows through as a
+landmark.
+
+### Solid objects
+
+`Fixture.solid` is a collision radius, deliberately separate from `footprint` (which is only
+layout spacing). Absent or 0 means he rolls straight through, so sprinkles stay frictionless
+while gumdrop hills deflect him. A bridge reserves a large footprint and blocks nothing, so
+he rolls underneath — the player has no vertical velocity and is always on the ground, which
+makes "go under" free.
+
+Pushout runs in `stepMotion` between the XZ integrate and the boundary check. It can't trap
+him: footprints never overlap and circles are convex.
+
+Because solids can enclose floor, `world/Reachability.ts` flood-fills from spawn and marks
+anything unreachable as unpaintable, so the door's threshold stays achievable. Set the solid
+radius to the geometry that actually meets the floor, not the object's overall size — a
+lollipop is a thin stick you should be able to walk right up to.
 
 ### The paint system
 
@@ -161,8 +189,11 @@ Notably **not** the mask upload — that's under 1% of the frame.
 | M1 terrain, character, joystick, camera | done |
 | M2 paint mask, ground shader, coverage | done |
 | S1 diorama stage: walls, tray, door, placed candy fixtures, paint-on-touch | done |
-| S2 colour climbs the walls | next |
-| S3 door blooms open → next scene | |
+| T1 player-centred fog; painting clears it permanently | done |
+| T2 bursts, sparkles, twinkles | done |
+| T3 silly-but-in-tune procedural audio | done |
+| T4 terrain hills, solid collision, arch and bridge | done |
+| S3 door blooms open → next scene | next |
 | S4 the candy dinosaur | |
 | S5 forest clearing (proves the grammar generalizes) | |
 | S6 indoor rooms, tiny worlds, vehicles | |

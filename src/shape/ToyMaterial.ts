@@ -1,13 +1,12 @@
-import { Color, ShaderMaterial, SRGBColorSpace, UniformsLib, UniformsUtils, Vector3 } from 'three';
+import { Color, ShaderMaterial, SRGBColorSpace, Vector2, Vector3, type DataTexture } from 'three';
+import { fogPars, maskPars } from '../paint/fog.glsl';
 
 /**
- * The shared material for every solid object that is not the ground: props,
- * collectibles, the gate, the player.
+ * The material for solid objects that are NOT instanced: the walls, the tray,
+ * the door, and the player.
  *
- * One hardcoded directional + hemi term instead of three.js lights. That means
- * exactly one shader permutation for the whole game, so no compile hitch when a
- * new object type first becomes visible, and no per-frame light uniform churn.
- * Colour arrives baked into the vertex `color` attribute by ShapeBuilder.
+ * One hardcoded directional + hemi term instead of three.js lights, so exactly
+ * one shader permutation and no compile hitch when something new first appears.
  */
 
 const vert = /* glsl */ `
@@ -16,11 +15,9 @@ precision mediump float;
 attribute vec3 color;
 varying vec3 vCol;
 varying vec3 vNrm;
+varying vec3 vWorld;
 
-uniform float uPaintAmount;   // 0 = drained, 1 = full colour
-uniform float uPop;           // spring overshoot on being painted
-
-#include <fog_pars_vertex>
+uniform float uPop;
 
 void main() {
   vCol = color;
@@ -28,11 +25,8 @@ void main() {
 
   vec3 p = position * (1.0 + uPop);
   vec4 wp = modelMatrix * vec4(p, 1.0);
-  // Must be named mvPosition: the <fog_vertex> chunk reads it by that name.
-  vec4 mvPosition = viewMatrix * wp;
-  gl_Position = projectionMatrix * mvPosition;
-
-  #include <fog_vertex>
+  vWorld = wp.xyz;
+  gl_Position = projectionMatrix * viewMatrix * wp;
 }
 `;
 
@@ -41,28 +35,39 @@ precision mediump float;
 
 varying vec3 vCol;
 varying vec3 vNrm;
+varying vec3 vWorld;
 
 uniform vec3  uLightDir;
 uniform vec3  uGrayTint;
 uniform float uPaintAmount;
+/** Caps how far this object may fade. The door uses it as a landmark. */
+uniform float uMaxFog;
+/** 1 = ignore the mask and use uPaintAmount alone (the player). */
+uniform float uSelfLit;
 
-#include <fog_pars_fragment>
+${maskPars}
+${fogPars}
 
 void main() {
   vec3 col = vCol;
 
-  // Same drained treatment as the ground, so a gray rock reads as the same
-  // material as the gray hill it sits on.
+  // The same drained treatment as the floor, so an unpainted wall reads as the
+  // same material as the unpainted ground it stands on.
   float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
   vec3 gray = mix(vec3(lum), uGrayTint, 0.62) * 0.55;
-  col = mix(gray, col, uPaintAmount);
+
+  // Walls and the door come alive where the floor beneath them is painted, so
+  // colour climbs the room as he works.
+  float lit = max(groundLit(vWorld) * (1.0 - uSelfLit), uPaintAmount);
+  col = mix(gray, col, lit);
 
   float ndl = dot(normalize(vNrm), uLightDir) * 0.5 + 0.5;
   col *= mix(0.55, 1.16, ndl);
 
+  col = applyFog(col, vWorld, max(lit, uSelfLit), uMaxFog);
+
   gl_FragColor = vec4(col, 1.0);
 
-  #include <fog_fragment>
   #include <colorspace_fragment>
 }
 `;
@@ -73,31 +78,32 @@ export interface ToyMaterialOpts {
   fogColor: number;
   fogNear: number;
   fogFar: number;
+  paintTex: DataTexture;
+  maskOrigin: Vector2;
+  maskInvSize: number;
+  /** true for the player, which is always in colour and never fades. */
+  selfLit?: boolean;
   painted?: boolean;
+  maxFog?: number;
 }
 
 export function createToyMaterial(o: ToyMaterialOpts): ShaderMaterial {
-  const uniforms = UniformsUtils.merge([
-    UniformsLib.fog,
-    {
-      uLightDir: { value: new Vector3() },
-      uGrayTint: { value: new Color() },
-      uPaintAmount: { value: o.painted === false ? 0 : 1 },
-      uPop: { value: 0 },
-    },
-  ]);
-
-  (uniforms.uLightDir!.value as Vector3).copy(o.lightDir).normalize();
-  (uniforms.uGrayTint!.value as Color).copy(new Color().setHex(o.grayTint, SRGBColorSpace));
-  uniforms.uPaintAmount!.value = o.painted === false ? 0 : 1;
-  (uniforms.fogColor!.value as Color).copy(new Color().setHex(o.fogColor, SRGBColorSpace));
-  uniforms.fogNear!.value = o.fogNear;
-  uniforms.fogFar!.value = o.fogFar;
-
   return new ShaderMaterial({
-    uniforms,
+    uniforms: {
+      uLightDir: { value: o.lightDir.clone().normalize() },
+      uGrayTint: { value: new Color().setHex(o.grayTint, SRGBColorSpace) },
+      uPaintAmount: { value: o.painted ? 1 : 0 },
+      uPop: { value: 0 },
+      uMaxFog: { value: o.maxFog ?? 1 },
+      uSelfLit: { value: o.selfLit ? 1 : 0 },
+      uPaintTex: { value: o.paintTex },
+      uMaskOrigin: { value: o.maskOrigin.clone() },
+      uMaskInvSize: { value: o.maskInvSize },
+      uFogCenter: { value: new Vector2() },
+      uFogRange: { value: new Vector2(o.fogNear, o.fogFar) },
+      uFogColor: { value: new Color().setHex(o.fogColor, SRGBColorSpace) },
+    },
     vertexShader: vert,
     fragmentShader: frag,
-    fog: true,
   });
 }

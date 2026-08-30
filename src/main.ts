@@ -62,7 +62,11 @@ const stick = new Joystick();
 stick.attach(app);
 stick.onFirstTouch = () => {
   firstTouch.classList.add('gone');
-  requestWakeLock();
+  void requestWakeLock();
+  // Mobile browsers only start audio from a real user gesture, so this is the
+  // one moment it can happen.
+  scene.audio.unlock();
+  scene.audio.startPad();
 };
 
 // --- debug ----------------------------------------------------------------
@@ -111,7 +115,9 @@ document.addEventListener('visibilitychange', () => {
   hidden = document.hidden;
   if (hidden) {
     releaseWakeLock();
+    scene.audio.suspend();
   } else {
+    scene.audio.resume();
     last = performance.now();
     void requestWakeLock();
   }

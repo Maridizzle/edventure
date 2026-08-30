@@ -68,6 +68,12 @@ const PREV_VEL = new Vector3();
 
 const GRAVITY = 9.81;
 
+/**
+ * Pushes the player out of solid obstacles. Supplied by the scene, because
+ * Motion must not know what a prop is.
+ */
+export type SolidResolver = (s: MoveState) => void;
+
 export function stepMotion(
   s: MoveState,
   m: MovementDef,
@@ -75,6 +81,7 @@ export function stepMotion(
   terrain: Terrain,
   worldSize: number,
   dt: number,
+  resolveSolids?: SolidResolver,
 ): void {
   PREV_VEL.copy(s.vel);
 
@@ -109,10 +116,18 @@ export function stepMotion(
   s.pos.x += s.vel.x * dt;
   s.pos.z += s.vel.z * dt;
 
-  // 7. Soft boundary: a rubbery push-back over the outer metres, never a wall.
+  // 7. Push out of anything solid. This must run AFTER the integrate (so there
+  //    is an overlap to resolve) and BEFORE the boundary and terrain snap.
+  //
+  //    It cannot trap him: the layout guarantees obstacle footprints never
+  //    overlap, and circles are convex, so there is no concave pocket to wedge
+  //    into. Reachability is the backstop for the areas they enclose.
+  resolveSolids?.(s);
+
+  // 8. Soft boundary: a rubbery push-back over the outer metres, never a wall.
   softBound(s, worldSize, dt);
 
-  // 8. Snap to terrain.
+  // 9. Snap to terrain.
   s.groundY = terrain.heightAt(s.pos.x, s.pos.z);
   terrain.normalAt(s.pos.x, s.pos.z, s.groundNormal);
   s.phase += s.speed * dt;

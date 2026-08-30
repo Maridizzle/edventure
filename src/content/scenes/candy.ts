@@ -32,11 +32,22 @@ export const candy: SceneDef = {
     // stage turns out to matter visually.
     width: 30,
     depth: 30,
-    floor: 'flat',
+    floor: 'terrain',
     walls: 'solid',
     // Tall enough to enclose, short enough not to eat a portrait frame at a
     // 50-degree camera pitch. Expect to tune this.
     wallHeight: 5.5,
+    // Gentle rolling hills. The 26-degree slope clamp in Terrain keeps
+    // everything traversable, so these are texture and occlusion rather than
+    // obstacles -- the solid fixtures are what he actually goes around.
+    terrain: {
+      octaves: [
+        { freq: 0.055, amp: 1.5 },
+        { freq: 0.13, amp: 0.45 },
+      ],
+      warp: { freq: 0.03, amp: 3.0 },
+      maxSlopeDeg: 24,
+    },
   },
 
   palette: {
@@ -55,6 +66,7 @@ export const candy: SceneDef = {
     // --- lollipop trees: the silhouette that says "candy" fastest -----------
     {
       kind: 'lollipop',
+      solid: 0.35,
       footprint: 1.5,
       scale: [1.5, 2.3],
       note: [0, 4, 7],
@@ -74,6 +86,7 @@ export const candy: SceneDef = {
     // --- gumdrop hills: big soft masses, break up the floor -----------------
     {
       kind: 'gumdrop',
+      solid: 1.4,
       footprint: 1.9,
       scale: [1.0, 1.5],
       note: [0, 2, 5],
@@ -91,6 +104,7 @@ export const candy: SceneDef = {
     // --- a giant cupcake as the centrepiece ---------------------------------
     {
       kind: 'cupcake',
+      solid: 1.3,
       footprint: 1.9,
       scale: [1.25, 1.25],
       note: [7, 12],
@@ -121,6 +135,7 @@ export const candy: SceneDef = {
     // --- candy canes flanking the door: frames the way out ------------------
     {
       kind: 'candycane',
+      solid: 0.35,
       footprint: 0.9,
       scale: [1.4, 1.6],
       note: [4, 9],
@@ -147,6 +162,7 @@ export const candy: SceneDef = {
     // --- liquorice allsort blocks along the side walls ----------------------
     {
       kind: 'allsort',
+      solid: 0.85,
       footprint: 1.1,
       scale: [1.0, 1.5],
       note: [2, 5, 9],
@@ -163,6 +179,7 @@ export const candy: SceneDef = {
     },
     {
       kind: 'donut',
+      solid: 0.9,
       footprint: 1.2,
       scale: [1.1, 1.6],
       note: [0, 7],
@@ -178,6 +195,59 @@ export const candy: SceneDef = {
             scale: [0.12, 0.04, 0.05],
             color: 2,
             repeat: { count: 7, mode: 'radialY', step: [0, 0, 0], rotStep: 0.7 },
+          },
+        ],
+      },
+    },
+
+    // --- a candy-cane arch to roll under ------------------------------------
+    // solid: 0 deliberately. The player is always on the ground and has no
+    // vertical velocity, so overhead geometry is something he simply passes
+    // beneath -- which is what makes "go under" free.
+    {
+      kind: 'arch',
+      solid: 0,
+      footprint: 3.4,
+      scale: [1.5, 1.9],
+      note: [0, 7, 12],
+      palette: [CREAM, RED, MINT],
+      place: { at: 'scatter', region: 'open', count: [1, 2] },
+      shape: {
+        parts: [
+          { prim: 'cyl', pos: [-1.7, 1.5, 0], scale: [0.22, 1.5, 0.22], color: 0 },
+          { prim: 'cyl', pos: [1.7, 1.5, 0], scale: [0.22, 1.5, 0.22], color: 0 },
+          { prim: 'torus', pos: [0, 3.0, 0], scale: [1.7, 1.7, 0.22], color: 1, detail: 1 },
+          {
+            prim: 'sphere',
+            pos: [0, 4.7, 0],
+            scale: [0.3, 0.3, 0.3],
+            color: 2,
+            detail: 1,
+          },
+        ],
+      },
+    },
+
+    // --- a liquorice bridge, likewise passable underneath --------------------
+    {
+      kind: 'bridge',
+      solid: 0,
+      footprint: 3.8,
+      scale: [1.3, 1.7],
+      note: [2, 9],
+      palette: [0x3a2f45, LEMON, PINK],
+      place: { at: 'scatter', region: 'edge', count: [1, 1] },
+      shape: {
+        parts: [
+          { prim: 'box', pos: [0, 2.1, 0], scale: [2.6, 0.18, 0.9], color: 0 },
+          { prim: 'box', pos: [-2.3, 1.1, 0], scale: [0.3, 1.1, 0.75], rot: [0, 0, 0.35], color: 0 },
+          { prim: 'box', pos: [2.3, 1.1, 0], scale: [0.3, 1.1, 0.75], rot: [0, 0, -0.35], color: 0 },
+          {
+            prim: 'box',
+            pos: [-1.8, 2.55, 0],
+            scale: [0.14, 0.32, 0.14],
+            color: 1,
+            repeat: { count: 5, mode: 'stackZ', step: [0.9, 0, 0] },
           },
         ],
       },

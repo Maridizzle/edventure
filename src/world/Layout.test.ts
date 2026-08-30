@@ -65,6 +65,18 @@ describe('layoutScene', () => {
     }
   });
 
+  it('always leaves the spawn point in open floor', () => {
+    // He must never arrive embedded in a gumdrop and get shoved out by the
+    // collision pass.
+    for (let seed = 0; seed < 200; seed++) {
+      const { placed, spawn } = layoutScene(candy, seed);
+      for (const p of placed) {
+        const d = Math.hypot(p.x - spawn.x, p.z - spawn.z);
+        expect(d, `seed ${seed}: ${p.kind} sits on the spawn`).toBeGreaterThan(p.footprint);
+      }
+    }
+  });
+
   it('places the big fixtures, not just scatter', () => {
     const { placed } = layoutScene(candy, 2024);
     const fixtures = placed.filter((p) => !p.isScatter);

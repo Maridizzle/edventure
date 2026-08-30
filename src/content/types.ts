@@ -82,6 +82,14 @@ export interface Fixture {
   place: Placement;
   /** Scale degrees this object may sound when painted. null = silent. */
   note: number[] | null;
+  /**
+   * Collision radius. Absent or 0 means he rolls straight through.
+   *
+   * Deliberately separate from `footprint`, which is only layout spacing: a
+   * bridge needs to reserve a lot of room while blocking nothing, so he can
+   * roll underneath it.
+   */
+  solid?: number;
 }
 
 export interface StageDef {

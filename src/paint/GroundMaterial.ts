@@ -1,13 +1,4 @@
-import {
-  Color,
-  ShaderMaterial,
-  SRGBColorSpace,
-  UniformsUtils,
-  UniformsLib,
-  Vector2,
-  Vector3,
-  type DataTexture,
-} from 'three';
+import { Color, ShaderMaterial, SRGBColorSpace, Vector2, Vector3, type DataTexture } from 'three';
 import { groundFrag, groundVert } from './paint.glsl';
 import type { AreaTransform } from '../core/AreaTransform';
 
@@ -34,6 +25,8 @@ export interface GroundMaterialOpts {
   transform: AreaTransform;
   paintTex: DataTexture;
   fieldTex: DataTexture;
+  maskOrigin: Vector2;
+  maskInvSize: number;
   noiseTex: DataTexture;
   heightMin: number;
   heightRange: number;
@@ -45,47 +38,26 @@ export interface GroundMaterialOpts {
 
 export function createGroundMaterial(o: GroundMaterialOpts): ShaderMaterial {
   const t = o.transform.uniforms();
-
-  const uniforms = UniformsUtils.merge([
-    UniformsLib.fog,
-    {
-      uPaintTex: { value: null },
-      uFieldTex: { value: null },
-      uNoise: { value: null },
-      uMaskOrigin: { value: new Vector2() },
-      uMaskInvSize: { value: 0 },
-      uColorA: { value: new Color() },
-      uColorB: { value: new Color() },
-      uColorAccent: { value: new Color() },
-      uGrayTint: { value: new Color() },
-      uLightDir: { value: new Vector3() },
-      uTime: { value: 0 },
-      uHeightMin: { value: 0 },
-      uHeightRange: { value: 1 },
-    },
-  ]);
-
-  // UniformsUtils.merge clones values, so assign the real objects afterwards.
-  uniforms.uPaintTex!.value = o.paintTex;
-  uniforms.uFieldTex!.value = o.fieldTex;
-  uniforms.uNoise!.value = o.noiseTex;
-  (uniforms.uMaskOrigin!.value as Vector2).copy(t.uMaskOrigin);
-  uniforms.uMaskInvSize!.value = t.uMaskInvSize;
-  (uniforms.uColorA!.value as Color).copy(linear(o.palette.groundA));
-  (uniforms.uColorB!.value as Color).copy(linear(o.palette.groundB));
-  (uniforms.uColorAccent!.value as Color).copy(linear(o.palette.accent));
-  (uniforms.uGrayTint!.value as Color).copy(linear(o.palette.grayTint));
-  (uniforms.uLightDir!.value as Vector3).copy(o.lightDir).normalize();
-  uniforms.uHeightMin!.value = o.heightMin;
-  uniforms.uHeightRange!.value = o.heightRange;
-  (uniforms.fogColor!.value as Color).copy(linear(o.fogColor));
-  uniforms.fogNear!.value = o.fogNear;
-  uniforms.fogFar!.value = o.fogFar;
-
   return new ShaderMaterial({
-    uniforms,
+    uniforms: {
+      uPaintTex: { value: o.paintTex },
+      uFieldTex: { value: o.fieldTex },
+      uNoise: { value: o.noiseTex },
+      uMaskOrigin: { value: t.uMaskOrigin },
+      uMaskInvSize: { value: t.uMaskInvSize },
+      uColorA: { value: linear(o.palette.groundA) },
+      uColorB: { value: linear(o.palette.groundB) },
+      uColorAccent: { value: linear(o.palette.accent) },
+      uGrayTint: { value: linear(o.palette.grayTint) },
+      uLightDir: { value: o.lightDir.clone().normalize() },
+      uTime: { value: 0 },
+      uHeightMin: { value: o.heightMin },
+      uHeightRange: { value: o.heightRange },
+      uFogCenter: { value: new Vector2() },
+      uFogRange: { value: new Vector2(o.fogNear, o.fogFar) },
+      uFogColor: { value: linear(o.fogColor) },
+    },
     vertexShader: groundVert,
     fragmentShader: groundFrag,
-    fog: true,
   });
 }

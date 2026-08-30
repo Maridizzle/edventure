@@ -1,6 +1,5 @@
 import {
   Color,
-  Fog,
   Group,
   Mesh,
   Scene,
@@ -21,6 +20,10 @@ import { Terrain } from '../world/Terrain';
 import { layoutScene, type LayoutResult } from '../world/Layout';
 import { buildStage, type StageBuild } from '../world/Stage';
 import { Props, TOUCH_SCRATCH } from '../world/Props';
+import { computeReachable } from '../world/Reachability';
+import { Motes } from './fx/Motes';
+import { AudioEngine } from '../core/Audio/AudioEngine';
+import { SCALES } from '../core/Audio/Scale';
 import { Door } from '../world/Door';
 import { Character } from '../player/Character';
 import { FollowCamera } from '../player/FollowCamera';
@@ -43,6 +46,32 @@ const PROP_SPLASH_M = 5.0;
 const GROUND_WEIGHT = 0.6;
 const PROP_WEIGHT = 0.4;
 
+/**
+ * How far he can see. Generous on purpose: a small child alone inside a tight
+ * fog bank is frightening rather than mysterious, and the fog is the sky's
+ * colour so it reads as haze, never as darkness.
+ */
+const FOG_CLEAR_M = 9.5;
+const FOG_FULL_M = 17;
+
+/** Seconds between idle sparkles on already-painted things. */
+const TWINKLE_EVERY = 0.55;
+
+/**
+ * Haptics, only once the page has genuinely been interacted with. Chrome logs
+ * a console error for a vibrate before user activation, and it is absent on
+ * iOS entirely -- neither is worth a crash over a nicety.
+ */
+function buzz(): void {
+  const nav = navigator as Navigator & { userActivation?: { hasBeenActive: boolean } };
+  if (nav.userActivation && !nav.userActivation.hasBeenActive) return;
+  try {
+    nav.vibrate?.(12);
+  } catch {
+    /* unsupported */
+  }
+}
+
 export class PlayScene {
   readonly scene = new Scene();
   readonly follow: FollowCamera;
@@ -55,6 +84,8 @@ export class PlayScene {
 
   private groundMat: ShaderMaterial;
   private toyMat: ShaderMaterial;
+  private playerMat: ShaderMaterial;
+  private doorMat: ShaderMaterial;
   private instMat: ShaderMaterial;
   private paintTex;
   private fieldTex;
@@ -68,6 +99,11 @@ export class PlayScene {
   private move: MoveState;
   private prevCellX = 0;
   private prevCellZ = 0;
+
+  readonly audio = new AudioEngine();
+  private motes: Motes;
+  private twinkleTimer = 0;
+  private fogCenter = new Vector2();
 
   private time = 0;
   private frameIndex = 0;
@@ -111,18 +147,17 @@ export class PlayScene {
 
     // --- sky + fog ---
     this.scene.background = new Color().setHex(def.sky.horizon, SRGBColorSpace);
-    const fogFar = Math.min(def.sky.fogFar, settings.fogFar);
-    this.scene.fog = new Fog(
-      new Color().setHex(def.sky.fogColor, SRGBColorSpace).getHex(),
-      def.sky.fogNear,
-      fogFar,
-    );
 
     const lightDir = new Vector3(...def.light.dir).normalize();
+    // Radial, player-centred fog replaces three's camera-distance fog entirely.
+    const mask = this.transform.uniforms();
     const fogArgs = {
       fogColor: def.sky.fogColor,
-      fogNear: def.sky.fogNear,
-      fogFar,
+      fogNear: FOG_CLEAR_M,
+      fogFar: FOG_FULL_M,
+      paintTex: this.paintTex,
+      maskOrigin: mask.uMaskOrigin,
+      maskInvSize: mask.uMaskInvSize,
     };
 
     this.scene.add(this.worldGroup);
@@ -136,7 +171,6 @@ export class PlayScene {
         grayTint: def.palette.grayTint,
       },
       transform: this.transform,
-      paintTex: this.paintTex,
       fieldTex: this.fieldTex,
       noiseTex: this.noiseTex,
       heightMin: this.terrain.minHeight,
@@ -149,10 +183,27 @@ export class PlayScene {
     this.worldGroup.add(ground);
 
     // --- shared materials ---
+    // Walls, tray and door: drained until the floor beneath them is painted.
     this.toyMat = createToyMaterial({
       lightDir,
       grayTint: def.palette.grayTint,
+      ...fogArgs,
+    });
+    // The player is always in colour and never fades into the fog -- losing
+    // sight of yourself is the one thing fog must never do.
+    this.playerMat = createToyMaterial({
+      lightDir,
+      grayTint: def.palette.grayTint,
       painted: true,
+      selfLit: true,
+      maxFog: 0,
+      ...fogArgs,
+    });
+    // The door glows faintly through the haze as a permanent landmark.
+    this.doorMat = createToyMaterial({
+      lightDir,
+      grayTint: def.palette.grayTint,
+      maxFog: 0.7,
       ...fogArgs,
     });
     this.instMat = createInstancedToyMaterial({
@@ -162,8 +213,8 @@ export class PlayScene {
     });
 
     // --- the diorama shell ---
-    // Walls use the pre-painted ToyMaterial for now; S2 gives them a shader
-    // that samples the floor mask so colour climbs them as he paints.
+    // The walls sample the floor mask beneath them, so colour climbs the room
+    // as he paints along its edges.
     this.stage = buildStage(def, this.toyMat);
     this.worldGroup.add(this.stage.group);
 
@@ -177,9 +228,29 @@ export class PlayScene {
       this.worldGroup,
       settings.shapeDetail,
     );
+    // Solid objects can enclose floor. Anything he cannot reach must drop out
+    // of the coverage denominator, or the door's threshold becomes impossible
+    // and a no-fail game acquires a dead end.
+    this.mask.setPaintableFrom(
+      computeReachable(
+        this.transform,
+        this.layout.placed,
+        (pl) => {
+          const d = pl.isScatter ? def.scatter[pl.defIndex]! : def.fixtures[pl.defIndex]!;
+          return (d.solid ?? 0) * pl.scale;
+        },
+        this.layout.spawn,
+        blob.radius,
+      ),
+    );
+
+    this.motes = new Motes(settings.particles);
+    this.scene.add(this.motes.points);
+    this.audio.setScene(def.audio.rootHz, SCALES[def.audio.scale] ?? undefined);
+
     this.door = new Door(
       def,
-      this.toyMat,
+      this.doorMat,
       this.layout.door,
       this.terrain.heightAt(this.layout.door.x, this.layout.door.z),
       settings.shapeDetail,
@@ -187,7 +258,7 @@ export class PlayScene {
     this.worldGroup.add(this.door.group);
 
     // --- player ---
-    this.player = new Character(blob, this.toyMat, settings.shapeDetail);
+    this.player = new Character(blob, this.playerMat, settings.shapeDetail);
     this.worldGroup.add(this.player.group);
 
     this.move = makeMoveState(blob.radius);
@@ -210,7 +281,15 @@ export class PlayScene {
   }
 
   fixedUpdate(input: Vector2, dt: number): void {
-    stepMotion(this.move, blob.movement, input, this.terrain, this.def.stage.width, dt);
+    stepMotion(
+      this.move,
+      blob.movement,
+      input,
+      this.terrain,
+      this.def.stage.width,
+      dt,
+      (st) => this.props.resolveSolids(st.pos, st.vel, st.radius),
+    );
 
     const flavor = FLAVORS[blob.movement.flavor];
     const cx = this.transform.cellX(this.move.pos.x);
@@ -236,7 +315,10 @@ export class PlayScene {
         this.transform.cellZ(p.z),
         this.transform.radiusCells(PROP_SPLASH_M),
       );
+      this.motes.burst(p.x, p.y + 0.7, p.z, 14, p.color);
+      this.audio.play(p.note);
     }
+    if (TOUCH_SCRATCH.length > 0) buzz();
 
     this.player.update(this.move, dt);
   }
@@ -255,6 +337,24 @@ export class PlayScene {
     this.groundMat.uniforms.uTime!.value = this.time;
     this.instMat.uniforms.uTime!.value = this.time;
 
+    // Fog follows the child, not the camera.
+    this.fogCenter.set(this.move.pos.x, this.move.pos.z);
+    for (const m of [this.groundMat, this.toyMat, this.playerMat, this.doorMat, this.instMat]) {
+      (m.uniforms.uFogCenter!.value as Vector2).copy(this.fogCenter);
+    }
+
+    this.motes.update(dt);
+
+    // Painted things keep sparkling, so a finished room stays alive.
+    this.twinkleTimer -= dt;
+    if (this.twinkleTimer <= 0) {
+      this.twinkleTimer = TWINKLE_EVERY;
+      const t = this.props.randomPainted();
+      if (t) this.motes.twinkle(t.x, t.y, t.z, t.color);
+    }
+
+    this.audio.setCoverage(this.progress);
+
     this.follow.update(dt, this.move.pos, this.move.vel, this.move.speedNorm, blob.face.lookAhead);
     renderer.render(this.scene, this.follow.camera);
   }
@@ -266,6 +366,7 @@ export class PlayScene {
 
   resize(w: number, h: number): void {
     this.follow.setAspect(w, h);
+    this.motes.setPixelScale(h);
   }
 
   /**
@@ -280,8 +381,11 @@ export class PlayScene {
     this.worldGroup.traverse((o) => {
       if (o instanceof Mesh) o.geometry.dispose();
     });
+    this.motes.dispose();
     this.groundMat.dispose();
     this.toyMat.dispose();
+    this.playerMat.dispose();
+    this.doorMat.dispose();
     this.instMat.dispose();
     this.paintTex.dispose();
     this.fieldTex.dispose();
