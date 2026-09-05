@@ -48,6 +48,35 @@ await page.waitForTimeout(1500);
 const startParade = await page.evaluate(() => window.__parade?.() ?? 0);
 await page.screenshot({ path: `${OUT}/01-start.png` });
 
+/**
+ * What fraction of the minimap is showing painted floor.
+ *
+ * The map is drawn on a dark ground and lerps toward the bright biome colour as
+ * paint lands, so luminance separates the two cleanly. Reading it back is the
+ * only way to know the map is showing the real mask rather than a pretty
+ * picture that happens to be there -- a screenshot proves something drew, not
+ * that it drew the truth.
+ */
+const mapPainted = () =>
+  page.evaluate(() => {
+    const c = document.getElementById('minimap');
+    if (!(c instanceof HTMLCanvasElement)) return -1;
+    const g = c.getContext('2d');
+    if (!g) return -1;
+    const d = g.getImageData(0, 0, c.width, c.height).data;
+    let lit = 0;
+    let solid = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 100) continue;
+      solid++;
+      const l = (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255;
+      if (l > 0.35) lit++;
+    }
+    return solid === 0 ? -1 : (100 * lit) / solid;
+  });
+
+const mapAtStart = await mapPainted();
+
 // Drive: press near the centre, drag up-left, hold, then sweep around.
 const cx = 206;
 const cy = 700;
@@ -185,6 +214,8 @@ await page.screenshot({ path: `${OUT}/06-gathered.png` });
 await page.mouse.up();
 console.log(`parade: ${parade} friends following`);
 
+const mapAtEnd = await mapPainted();
+
 const stats = await page.evaluate(() => {
   const el = document.getElementById('debug');
   return el ? el.textContent : null;
@@ -202,6 +233,17 @@ if (errors.length) {
   console.error('PAGE ERRORS:');
   for (const e of errors) console.error('  ' + e);
   failed = true;
+}
+if (mapAtStart < 0 || mapAtEnd < 0) {
+  console.error('FAIL: the minimap did not render at all.');
+  failed = true;
+} else if (mapAtEnd <= mapAtStart + 1) {
+  console.error(
+    `FAIL: the map did not fill in as he painted (${mapAtStart.toFixed(1)}% -> ${mapAtEnd.toFixed(1)}%).`,
+  );
+  failed = true;
+} else {
+  console.log(`OK: map filled ${mapAtStart.toFixed(1)}% -> ${mapAtEnd.toFixed(1)}% as he painted.`);
 }
 if (startParade < 1) {
   console.error('FAIL: he started with no friend at all.');

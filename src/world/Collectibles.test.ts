@@ -255,3 +255,38 @@ describe('the friend he starts with', () => {
     collectibles.dispose();
   });
 });
+
+describe('what the collection row counts', () => {
+  /**
+   * The pip row draws one slot per entry in `items`, and every one of those
+   * slots has to be fillable. A slot for something that was never placed is a
+   * permanent empty box, and he will keep combing the room for a creature that
+   * does not exist in it.
+   */
+  it('every slot in the row can actually be filled', () => {
+    for (const seed of [2, 33, 512]) {
+      const { props, collectibles } = room(seed);
+      expect(collectibles.items.length).toBeGreaterThan(0);
+      for (const h of collectibles.items) {
+        expect(h.def.hide, 'a given creature must never be placed').not.toBe('given');
+        if (h.def.hide === 'disguise') {
+          expect(h.propIds.length, `${h.def.id} hides in no prop`).toBeGreaterThan(0);
+        }
+      }
+      props.dispose();
+      collectibles.dispose();
+    }
+  });
+
+  it('never claims more slots than the scene actually placed', () => {
+    // `def.collectibles.length` over-counts: it includes `given` creatures and
+    // any whose placement failed. `items.length` is the honest denominator.
+    for (const seed of [2, 33, 512]) {
+      const { props, collectibles } = room(seed);
+      expect(collectibles.items.length).toBeLessThanOrEqual(candy.collectibles.length);
+      expect(collectibles.foundCount).toBe(0);
+      props.dispose();
+      collectibles.dispose();
+    }
+  });
+});

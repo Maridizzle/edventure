@@ -14,21 +14,21 @@ import type { CollectibleDef } from '../content/types';
 export class Roster {
   /** Insertion-ordered, oldest friend first. */
   private order: CollectibleDef[] = [];
-  private ids = new Set<string>();
+  private seen = new Set<string>();
 
   /**
    * Returns true only the first time. Finding the same kind again in a later
    * room is a perfectly ordinary thing to do and must not clone anybody.
    */
   add(def: CollectibleDef): boolean {
-    if (this.ids.has(def.id)) return false;
-    this.ids.add(def.id);
+    if (this.seen.has(def.id)) return false;
+    this.seen.add(def.id);
     this.order.push(def);
     return true;
   }
 
   has(id: string): boolean {
-    return this.ids.has(id);
+    return this.seen.has(id);
   }
 
   get size(): number {
@@ -55,6 +55,29 @@ export class Roster {
     const tail = followers.slice(Math.max(0, followers.length - limit));
     // Newest first, so a friend found a minute ago is the one at his heels.
     return tail.reverse();
+  }
+
+  /**
+   * The ids he owns, oldest first. This is the entire save file.
+   *
+   * The roster stays a plain data structure and does no storage of its own --
+   * `core/Save.ts` owns that, the way `Audio/Voice.ts` owns the recording. It
+   * keeps this testable without a fake IndexedDB, and it keeps every write to
+   * the device in one file.
+   */
+  ids(): string[] {
+    return this.order.map((d) => d.id);
+  }
+
+  /**
+   * Put a saved collection back. Returns only the ones that were actually new,
+   * so the caller can give each of them a body without cloning anyone he is
+   * already walking around with.
+   */
+  restore(defs: readonly CollectibleDef[]): CollectibleDef[] {
+    const added: CollectibleDef[] = [];
+    for (const d of defs) if (this.add(d)) added.push(d);
+    return added;
   }
 
   /** How many of each family. The silhouette pips will want this later. */

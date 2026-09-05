@@ -114,6 +114,42 @@
         opacity: 1;
       }
 
+      /* --- the HUD: a map of the room, and what he has found in it ---
+         Top-left: top-right is permanently the grown-up hotspot, and the
+         bottom of a phone is where a five-year-old's hand lives.
+
+         pointer-events: none is load-bearing, not tidiness. The joystick binds
+         its listeners to #app and spawns wherever the first touch lands, so a
+         child must be able to plant his thumb straight on the map and still
+         drive. Every other overlay in here does the same.
+
+         z-index 3 puts it under #fade (5), so a room change covers it, and
+         under #gp-scrim (20). */
+      #hud {
+        position: absolute;
+        top: calc(env(safe-area-inset-top, 0px) + 8px);
+        left: calc(env(safe-area-inset-left, 0px) + 8px);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        pointer-events: none;
+        z-index: 3;
+      }
+      #minimap {
+        width: 23vmin;
+        max-width: 132px;
+        min-width: 82px;
+        height: auto;
+        filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
+      }
+      #pips {
+        /* Width is set from the slot count in JS; this only caps it so a long
+           row cannot run off a narrow phone. */
+        max-width: 62vw;
+        height: auto;
+        filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
+      }
+
       /* --- the grown-up door: hold a corner for two seconds ---
          Invisible until it is most of the way through the hold, so an adult
          holding on purpose gets feedback and a child brushing the corner
@@ -205,7 +241,8 @@
       /* --- debug overlay: the ONLY place text may exist. ?debug=1 only. --- */
       #debug {
         position: absolute;
-        top: 0;
+        /* Clear of #hud, which owns the top-left corner in shipping builds. */
+        top: 42vmin;
         left: 0;
         padding: 6px 8px;
         font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;

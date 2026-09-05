@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Roster } from './Roster';
 import { candyCollectibles } from '../content/collectibles/candy';
+import { ALL_COLLECTIBLES, COLLECTIBLE_BY_ID } from '../content/collectibles';
 import type { CollectibleDef } from '../content/types';
 
 /**
@@ -81,5 +82,53 @@ describe('Roster', () => {
     const many: CollectibleDef[] = follows.map((c, i) => ({ ...c, id: `x${i}` }));
     for (const c of many) r.add(c);
     expect(r.parade(1000)).toHaveLength(many.length);
+  });
+});
+
+/**
+ * The save file is this list of ids and nothing else. What matters here is that
+ * a round trip is lossless and order-preserving, because a five-year-old counts
+ * his dinosaurs and will notice one missing.
+ */
+describe('saving and restoring the collection', () => {
+  it('round-trips through ids with nothing lost or reordered', () => {
+    const a = new Roster();
+    for (const c of candyCollectibles) a.add(c);
+
+    const saved = a.ids();
+    const b = new Roster();
+    b.restore(saved.map((id) => COLLECTIBLE_BY_ID.get(id)!));
+
+    expect(b.ids()).toEqual(saved);
+    expect(b.size).toBe(a.size);
+  });
+
+  it('every id it can save can be looked up again', () => {
+    // A creature missing from the catalogue would come back as a hole in his
+    // collection, silently, and only for the child who had found that one.
+    const r = new Roster();
+    for (const c of ALL_COLLECTIBLES) r.add(c);
+    for (const id of r.ids()) expect(COLLECTIBLE_BY_ID.has(id), `${id} is not in the catalogue`).toBe(true);
+  });
+
+  it('reports only the ones that were actually new', () => {
+    // The caller gives each returned def a body. Returning one he is already
+    // walking around with would clone it.
+    const r = new Roster();
+    r.add(candyCollectibles[0]!);
+    const added = r.restore(candyCollectibles.slice(0, 3));
+    expect(added.map((d) => d.id)).toEqual([candyCollectibles[1]!.id, candyCollectibles[2]!.id]);
+    expect(r.size).toBe(3);
+  });
+
+  it('survives a save written by an older version', () => {
+    // Ids that no longer exist are skipped rather than taking the rest of the
+    // collection down with them.
+    const known = ['candy.stego', 'gone.forever', 'candy.snail']
+      .map((id) => COLLECTIBLE_BY_ID.get(id))
+      .filter((d): d is NonNullable<typeof d> => d !== undefined);
+    const r = new Roster();
+    r.restore(known);
+    expect(r.ids()).toEqual(['candy.stego', 'candy.snail']);
   });
 });

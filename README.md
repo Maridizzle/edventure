@@ -16,8 +16,8 @@ Every decision in this codebase follows from these. If a change breaks one, it's
 change.
 
 1. **Zero text.** No words, no numbers, no letters, anywhere in the game. Not in menus, not
-   in progress displays. Progress is shown by the painting itself. The only exception is
-   the debug overlay, which is behind `?debug=1`.
+   in progress displays. Progress is a map filling in, a border closing and a row of
+   silhouettes. The only exception is the debug overlay, which is behind `?debug=1`.
 2. **One thumb.** One floating joystick, no buttons, and the camera never yaws — so "up"
    is always the same direction in the world.
 3. **No way to lose.** No death, no timers, no enemies, no dead ends, no lost progress.
@@ -56,6 +56,7 @@ npm run dev          # LAN-accessible; open the Network URL on a phone
 | `npm run smoke <url\|file>` | headless render + paint check, writes `scratch/shots/` |
 | `npm run offline <url>` | proves the service worker serves the app with the network cut |
 | `npm run rooms <url>` | walks a parade through ten doors and asserts nothing leaks |
+| `npm run save <url>` | finds creatures, reloads the page, asserts they came back |
 
 Append `?debug=1` to any URL for the stats overlay and a live blit of the paint mask, and
 `?seed=N` to pin the first room — a screenshot of anything in particular is otherwise a
@@ -165,6 +166,86 @@ one geometry. Ten transitions must return the geometry and texture counters to b
 It hands him a parade *before* taking the baseline, deliberately. Followers are per-scene
 bodies built from an app-level list — the same shape as the bug above — and with an empty
 roster none of that code runs and the check passes while proving nothing.
+
+### The map, and the collection row
+
+Progress used to be shown by the painting alone, and that was unfair: the door
+opens at half a coverage figure, in a 48 m room he can see 8.5 m of. So the top-left
+corner now carries a map of the room, filling in as he paints it — the same paint mask,
+cell for cell, not a second scoring system. It is `DebugOverlay.blit()` grown up, on a
+2D canvas composited by the browser, at no GPU cost.
+
+Three details are load-bearing:
+
+- **The border is the progress bar.** One element, two readings: the map says *where*, the
+  border says *how much*, and it closes exactly when the door opens. `gateProgress`, not raw
+  coverage — a bar that fills to halfway and then something happens means nothing at five.
+  It is drawn white, because in Candy Land the biome colour and the sky are both pink and a
+  border painted in it vanishes precisely when it is full.
+- **The door is on the map, always.** This quietly retires the oldest problem in the game:
+  with tight fog and a low camera the doorway is usually off-screen at the moment it opens,
+  and the spark ribbon and then the crowd of animals were both workarounds for not being able
+  to see where it is.
+- **Unreachable floor is drawn dark, not transparent.** A hole would let the bright sky
+  through and read as a gap in the room, when what is actually there is something in the way.
+
+Under it, one slot per hidden thing in **this** room. `collectibles.items.length` is the
+honest denominator, never the scene's authored list — that includes `given` creatures and any
+whose placement failed, so it would leave a slot that can never be filled. A permanent empty
+box is a small lie told to a child who is counting, and he will keep looking.
+
+Found slots show the creature; empty ones show a blank, emphatically *not* a greyed-out
+silhouette, which would spoil every hidden object in the room at once.
+
+`pointer-events: none` on all of it. The joystick binds to `#app` and spawns wherever the
+first touch lands, so he must be able to plant his thumb on the map and still drive.
+
+### Silhouettes
+
+`ui/Silhouette.ts` is a second renderer for the recipes `ShapeBuilder` already consumes: it
+projects the primitives to 2D on the CPU and fills them in one flat colour, so overlapping
+parts merge into one shape. No WebGL, no offscreen 3D, no new artwork — adding a creature is
+still adding one data file.
+
+**The view is chosen, not fixed.** Each recipe is projected both from the side and from the
+front and the larger footprint wins. Most creatures read best in profile — a dinosaur seen
+head-on is a blob, and `mirrorX` repeats like legs land on top of each other, which is what a
+silhouette wants. But a butterfly's wings and a coin's face are edge-on from the side and come
+out as slivers. Scored on bounding-box area rather than summed part area, deliberately: a flat
+thing seen edge-on stacks all its parts on top of each other, and summing would rank that pile
+*above* the view that actually shows the wings.
+
+Two things here are easy to get silently wrong. **The unit primitives are not unit-sized** —
+a box is 2 across, a cone is 2 tall with its apex at +1, a capsule is 3.4 tall, a torus is 1.35
+across and 0.7 thick — and assuming otherwise draws the wrong creature with nothing to say so.
+And `instancesOf` is exported from `ShapeBuilder` rather than reimplemented, because `mirrorX`
+mirrors only `pos[0]` while adding `step[0]·k` unmirrored, and `radialY` *discards* the
+authored x and z for a ring of radius `hypot(x, z)`.
+
+### Saving
+
+His collection is written to the device, and being exact matters because this is a promise made
+to a child. IndexedDB is site storage, **not** the HTTP cache — clearing cached files does not
+touch it — and `navigator.storage.persist()` asks the browser to mark it exempt from automatic
+eviction, which Chrome grants for an app installed to the home screen. It survives closing,
+rebooting and being offline. It does not survive uninstalling the app or clearing the site's
+data, and it does not follow him to another phone.
+
+The save is a list of ids and nothing else; `content/collectibles/index.ts` turns them back
+into creatures. Storing whole recipes would freeze his collection at whatever the shapes looked
+like the day he found them. An id that no longer exists is skipped rather than taking the rest
+of the collection down with it.
+
+Restoring goes through the *same two calls a real find makes* — add to the roster, then give it
+a body — rather than a second path that could drift. Storage is async and the first room is
+built synchronously, so his friends arrive a moment after the room does, which reads as them
+catching up.
+
+**Every write swallows its own failure.** A save that cannot be written must never take the
+game down with it; he would lose the room he is in as well as the collection. And
+`npm run save` is not optional: a save that silently fails is worse than no save, because he
+will trust it, find eight creatures, close the app and lose them with nobody noticing for
+weeks.
 
 ### The parade, and the celebration
 
@@ -342,7 +423,8 @@ Notably **not** the mask upload — that's under 1% of the frame.
 | U5 parade of found friends, following him through every door | done |
 | U6 the celebration: room-wide cheer wave, run for the door, your recorded voice | done |
 | U7 a friend from frame one; warmth that actually guides; finds that happen | done |
-| U8 silhouette pips for the collection | next |
+| U8 map, collection row, and a save that survives the app closing | done |
+| S4 the candy dinosaur | next |
 | S4 the candy dinosaur | |
 | S5 forest clearing (proves the grammar generalizes) | |
 | S6 indoor rooms, tiny worlds, vehicles | |

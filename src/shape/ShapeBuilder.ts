@@ -75,8 +75,19 @@ function linear(hex: number): Color {
   return new Color().setHex(hex, SRGBColorSpace);
 }
 
-/** Expand a part's `repeat` into concrete transforms. */
-function* instancesOf(part: Part): Generator<{ pos: number[]; rot: number[]; scale: number[] }> {
+/**
+ * Expand a part's `repeat` into concrete transforms.
+ *
+ * Exported because the 2D silhouette renderer in `ui/Silhouette.ts` projects the
+ * very same recipes and must expand repeats identically. Two of these rules are
+ * easy to get wrong from a reading of the type alone: `mirrorX` mirrors only
+ * `pos[0]` while adding `step[0] * k` unmirrored (with `k = floor(i / 2)`, so
+ * instances go +,-,+,- in pairs) and flips only `rot[2]`; and `radialY`
+ * DISCARDS the authored x and z, replacing them with a ring of radius
+ * `hypot(pos[0], pos[2])`. A second implementation would drift from this one
+ * silently, and the only symptom would be a slightly wrong little picture.
+ */
+export function* instancesOf(part: Part): Generator<{ pos: number[]; rot: number[]; scale: number[] }> {
   const rot = part.rot ?? [0, 0, 0];
   if (!part.repeat) {
     yield { pos: part.pos, rot, scale: part.scale };

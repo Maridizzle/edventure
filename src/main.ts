@@ -7,6 +7,9 @@ import { Roster } from './game/Roster';
 import { starterFriend } from './content/collectibles/friend';
 import { Joystick } from './ui/Joystick';
 import { GrownUpPanel } from './ui/GrownUpPanel';
+import { Hud } from './ui/Hud';
+import { COLLECTIBLE_BY_ID } from './content/collectibles';
+import { flushSave, loadSave, queueSave, requestPersistence } from './core/Save';
 import { DebugOverlay } from './ui/DebugOverlay';
 import {
   QualityGovernor,
@@ -72,6 +75,32 @@ const roster = new Roster();
 // show him is for it to already be true on frame one. Everything he finds
 // afterwards adds to something he already understands.
 roster.add(starterFriend);
+
+/** Every change to the collection is written to the device, coalesced. */
+function saveRoster(): void {
+  queueSave({ found: roster.ids() });
+}
+
+/**
+ * Bring back what he found last time.
+ *
+ * Restoring goes through the SAME two calls a real find makes -- add to the
+ * roster, then give it a body -- rather than a second code path that could
+ * drift from the first. Storage is async and the first room is built
+ * synchronously, so his friends arrive a moment after the room does, which
+ * reads as them catching up with him rather than as a glitch.
+ */
+async function restoreRoster(): Promise<void> {
+  const save = await loadSave();
+  if (!save) return;
+  const defs = save.found
+    .map((id) => COLLECTIBLE_BY_ID.get(id))
+    .filter((d): d is NonNullable<typeof d> => d !== undefined);
+  const p = scene.playerPos;
+  for (const def of roster.restore(defs)) {
+    if (def.onFind === 'follow') scene.followers.add(def, p.x, p.z + 2);
+  }
+}
 const voice = new VoiceStore();
 void voice.load();
 const transition = new Transition(app);
@@ -111,6 +140,7 @@ async function goThroughDoor(): Promise<void> {
     old.dispose();
     applySize();
     renderer.compile(scene.scene, scene.follow.camera);
+    hud.setScene(scene);
     debug.remount(app, scene.mask);
   });
 }
@@ -133,11 +163,21 @@ stick.onFirstTouch = () => {
   // Decode the recorded cheer now, so the first finished room does not have to
   // wait on it.
   void voice.prime(audio);
+  // Ask here rather than at load: some browsers weigh user engagement, and this
+  // is the first moment there is any.
+  void requestPersistence();
 };
 
 // The grown-up door: hold a screen corner for two seconds. Never surfaced to
 // him, and never prompted during play.
 const grownUp = new GrownUpPanel(app, voice, audio);
+
+// The map and the collection row. App-level, like the audio and the roster:
+// only the room it is pointed at changes.
+const hud = new Hud();
+hud.mount(app);
+hud.setScene(scene);
+void restoreRoster();
 
 // --- debug ----------------------------------------------------------------
 const debug = new DebugOverlay();
@@ -153,6 +193,7 @@ if (DebugOverlay.enabled) {
     __warmth?: () => number;
     __hidden?: () => { dx: number; dz: number; d: number } | null;
     __warmGain?: (v: number) => void;
+    __collection?: () => number;
     __exit?: () => Promise<void>;
     __mem?: () => { geometries: number; textures: number };
   };
@@ -167,6 +208,9 @@ if (DebugOverlay.enabled) {
   // one, which is the only way to photograph the warmth glow reliably.
   w.__hidden = () => scene.debugNearestHidden();
   w.__warmGain = (v) => scene.debugWarmGain(v);
+  // The roster, not the visible parade -- the parade is capped at eight and the
+  // collection is not, and it is the collection that gets saved.
+  w.__collection = () => roster.size;
   w.__exit = () => goThroughDoor();
   // The leak check: this teardown path had never run before rooms could be
   // left, so it gets asserted rather than eyeballed.
@@ -219,6 +263,9 @@ document.addEventListener('visibilitychange', () => {
   if (hidden) {
     releaseWakeLock();
     audio.suspend();
+    // Backgrounding may be the last thing that happens to this page, and the
+    // save is debounced -- write it out now rather than losing the last find.
+    flushSave();
   } else {
     audio.resume();
     last = performance.now();
@@ -236,6 +283,9 @@ renderer.compile(scene.scene, scene.follow.camera);
 // --- loop -----------------------------------------------------------------
 /** Input is frozen mid-transition and behind the grown-up panel. */
 const ZERO_INPUT = new Vector2();
+
+/** Last collection size written to the device. */
+let savedCount = 0;
 
 const FIXED = 1 / 60;
 const MAX_SUBSTEPS = 5; // prevents a spiral of death after a tab-switch stall
@@ -266,7 +316,16 @@ function frame(now: number): void {
   if (steps === MAX_SUBSTEPS) accumulator = 0;
 
   scene.render(renderer, dt);
+  hud.update(dtMs);
   debug.update(dtMs, renderer, scene.mask, governor.tier, pixelRatio);
+
+  // Polled rather than pushed: a callback would have to be re-wired onto every
+  // new PlayScene and is one edit away from being forgotten in a room where a
+  // find would then go unsaved. An integer compare cannot be forgotten.
+  if (roster.size !== savedCount) {
+    savedCount = roster.size;
+    saveRoster();
+  }
 }
 
 requestAnimationFrame(frame);

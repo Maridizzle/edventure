@@ -399,6 +399,27 @@ export class PlayScene {
     return this.mask.coverage;
   }
 
+  /**
+   * 0..1, but measured against the GATE rather than against a full room.
+   *
+   * This is what the map's border shows. A border that fills to halfway and
+   * then the door opens would mean nothing to a five-year-old -- the thing he
+   * needs to read is "how close am I to the way out", so full means open.
+   */
+  get gateProgress(): number {
+    return Math.min(1, this.progress / GATE);
+  }
+
+  /** Where he is. The map needs it; nothing else outside here should. */
+  get playerPos(): Vector3 {
+    return this.move.pos;
+  }
+
+  /** Where the way out is, so the map can show it even when the fog cannot. */
+  get doorPos(): Vector3 {
+    return this.door.position;
+  }
+
   fixedUpdate(input: Vector2, dt: number): void {
     stepMotion(
       this.move,

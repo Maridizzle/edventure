@@ -14,7 +14,8 @@
     "build:standalone": "node scripts/build-standalone.mjs",
     "smoke": "node scripts/smoke.mjs",
     "offline": "node scripts/offline-check.mjs",
-    "rooms": "node scripts/rooms-check.mjs"
+    "rooms": "node scripts/rooms-check.mjs",
+    "save": "node scripts/save-check.mjs"
   },
   "dependencies": {
     "idb-keyval": "^6.3.0",
